@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>StockAI - 15m Pattern & News Sentiment Trading Bot</title>
+  
+  <!-- PWA & Mobile Capabilities -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#080b11">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2310b981'/><path d='M25 65 L45 45 L60 55 L75 30' stroke='white' stroke-width='8' fill='none'/></svg>">
+  
+  <!-- Stylesheets -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+
+  <!-- ========================================================================
+       Top Sticky App Header
+       ======================================================================== -->
+  <header class="app-header">
+    <div class="header-top">
+      <div class="brand">
+        <div class="brand-icon">📈</div>
+        <span>Stock<span style="color:var(--color-cyan);">AI</span> Bot</span>
+        <div class="live-badge">
+          <span class="live-dot"></span>
+          <span>15M LIVE</span>
+        </div>
+      </div>
+
+      <!-- Desktop Nav -->
+      <div class="desktop-nav">
+        <button class="btn btn-outline btn-sm nav-btn active" data-tab="screener">📡 Screener</button>
+        <button class="btn btn-outline btn-sm nav-btn" data-tab="chart">📈 15m Chart</button>
+        <button class="btn btn-outline btn-sm nav-btn" data-tab="news">📰 News Sentiment</button>
+        <button class="btn btn-outline btn-sm nav-btn" data-tab="trading">💼 Paper Trade</button>
+        <button class="btn btn-outline btn-sm nav-btn" data-tab="settings">⚙️ Settings</button>
+      </div>
+
+      <div class="wallet-quick-pill" id="header-wallet-pill" onclick="switchTab('trading')">
+        💼 ₹100,000.00
+      </div>
+    </div>
+
+    <!-- Live Ticker Ribbon -->
+    <div class="ticker-ribbon" id="ticker-ribbon">
+      <div class="ticker-item"><span class="ticker-symbol">LOADING...</span></div>
+    </div>
+  </header>
+
+  <!-- ========================================================================
+       Main Content Container
+       ======================================================================== -->
+  <main class="app-container">
+
+    <!-- TAB 1: Screener & Signals Radar -->
+    <section id="view-screener" class="view-section active">
+      <div class="section-title-bar">
+        <h1 class="section-title">📡 AI Signal Screener</h1>
+        <button class="btn btn-outline btn-sm" onclick="loadScreener()">🔄 Refresh</button>
+      </div>
+      <div class="screener-grid" id="screener-grid">
+        <!-- Rendered dynamically by app.js -->
+      </div>
+    </section>
+
+    <!-- TAB 2: 15m Candlestick Chart & Confluence -->
+    <section id="view-chart" class="view-section">
+      <div class="chart-controls-bar">
+        <div class="stock-selector-wrap">
+          <label style="color:var(--text-muted); font-size:0.8rem;">Stock:</label>
+          <select class="custom-select stock-select-dropdown" onchange="selectStock(this.value)">
+            <!-- Populated via JS -->
+          </select>
+        </div>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <span id="chart-cmp-display" style="font-size:1.3rem; font-weight:700; font-family:var(--font-mono);">₹0.00</span>
+          <span id="chart-signal-badge" class="badge badge-neutral">NEUTRAL</span>
+        </div>
+      </div>
+
+      <!-- Candlestick Chart Canvas -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <span style="font-size:0.85rem; font-weight:600; color:var(--text-secondary);">
+            15-Minute Candlesticks (with EMA 9 / EMA 21 & Patterns)
+          </span>
+          <span style="font-size:0.75rem; color:var(--text-muted);">Scroll/pinch to pan</span>
+        </div>
+        <canvas id="candlestick-canvas"></canvas>
+        <canvas id="rsi-canvas"></canvas>
+
+        <div style="margin-top:10px;">
+          <div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:4px;">Detected Candlestick Patterns:</div>
+          <div class="patterns-ribbon" id="chart-patterns-ribbon">
+            <span style="font-size:0.75rem; color:var(--text-muted);">None detected in current 15m bar</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Confluence Breakdown Box -->
+      <div class="confluence-box">
+        <div style="font-weight:700; font-size:0.95rem; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
+          <span>🧠 AI Confluence Synthesis</span>
+          <span style="font-size:0.75rem; color:var(--text-muted);">Sentiment 35% + Candlestick 35% + Indicators 30%</span>
+        </div>
+
+        <div class="confluence-scores-row">
+          <div class="score-chip">
+            <div class="score-chip-title">Total AI Confluence</div>
+            <div class="score-chip-val text-cyan" id="chip-confluence">0%</div>
+          </div>
+          <div class="score-chip">
+            <div class="score-chip-title">News Sentiment (35%)</div>
+            <div class="score-chip-val" id="chip-sentiment">0.0</div>
+          </div>
+          <div class="score-chip">
+            <div class="score-chip-title">Candlestick Bias (35%)</div>
+            <div class="score-chip-val" id="chip-candlestick">0.0</div>
+          </div>
+          <div class="score-chip">
+            <div class="score-chip-title">Technicals (30%)</div>
+            <div class="score-chip-val" id="chip-technical">0.0</div>
+          </div>
+        </div>
+
+        <div style="font-size:0.8rem; font-weight:600; color:var(--text-muted); margin-bottom:6px;">Analysis & Confluence Reasons:</div>
+        <ul class="reasons-list" id="confluence-reasons-list">
+          <li class="reason-item"><span class="reason-bullet">›</span> Loading technical confluence...</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- TAB 3: AI News & Sentiment Radar -->
+    <section id="view-news" class="view-section">
+      <div class="section-title-bar">
+        <h1 class="section-title">📰 News Sentiment Radar</h1>
+        <select class="custom-select stock-select-dropdown" onchange="selectStock(this.value)">
+          <!-- Populated via JS -->
+        </select>
+      </div>
+
+      <!-- Sentiment Meter Card -->
+      <div class="sentiment-radar-card">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-weight:700; font-size:1.05rem;">Daily Media Sentiment</span>
+          <span id="sentiment-score-val" style="font-size:1.4rem; font-weight:800; font-family:var(--font-mono); color:var(--color-cyan);">+0.00</span>
+        </div>
+        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:2px;">
+          Classification: <strong id="sentiment-label-val" style="color:var(--text-primary);">NEUTRAL</strong>
+        </div>
+
+        <div class="sentiment-gauge-wrap">
+          <div class="gauge-bar-track">
+            <div class="gauge-marker" id="sentiment-gauge-marker" style="left:50%;"></div>
+          </div>
+          <div class="gauge-labels">
+            <span class="text-bearish">Bearish (-1.0)</span>
+            <span class="text-neutral">Neutral (0.0)</span>
+            <span class="text-bullish">Bullish (+1.0)</span>
+          </div>
+        </div>
+
+        <div style="display:flex; gap:16px; margin-top:10px; font-size:0.8rem;">
+          <div>Bullish Articles: <strong class="text-bullish" id="sentiment-pos-count">0</strong></div>
+          <div>Neutral: <strong class="text-neutral" id="sentiment-neu-count">0</strong></div>
+          <div>Bearish: <strong class="text-bearish" id="sentiment-neg-count">0</strong></div>
+        </div>
+      </div>
+
+      <!-- AI Executive Market Summary -->
+      <div class="ai-summary-card">
+        <div class="ai-summary-header">
+          <span>✨ AI Quantitative Market Synthesis</span>
+        </div>
+        <div class="ai-summary-text" id="ai-summary-text">
+          Loading breaking financial coverage analysis...
+        </div>
+      </div>
+
+      <!-- Breaking News Feed -->
+      <div style="font-weight:700; font-size:1rem; margin-bottom:10px;">Breaking News Stream (Google RSS & Yahoo Finance)</div>
+      <div class="news-stream-list" id="news-stream-list">
+        <!-- News cards populated via JS -->
+      </div>
+    </section>
+
+    <!-- TAB 4: Paper Trading Simulator -->
+    <section id="view-trading" class="view-section">
+      <div class="section-title-bar">
+        <h1 class="section-title">💼 Paper Trading & AI Auto-Trader</h1>
+        <button class="btn btn-outline btn-sm text-bearish" onclick="resetPortfolioPrompt()">⚠️ Reset Portfolio</button>
+      </div>
+
+      <!-- Autonomous AI Auto-Trader Banner -->
+      <div class="trade-ticket-card" style="background:linear-gradient(135deg, rgba(16,185,129,0.12), rgba(6,182,212,0.08)); border-color:rgba(16,185,129,0.4); margin-bottom:14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+          <div>
+            <div style="font-weight:800; font-size:1.05rem; display:flex; align-items:center; gap:8px;">
+              <span>🤖 Autonomous AI Auto-Trader</span>
+              <span class="badge badge-strong-buy" style="font-size:0.7rem;" id="ai-autotrader-badge">🟢 AUTO ACTIVE</span>
+            </div>
+            <div style="font-size:0.78rem; color:var(--text-secondary); margin-top:3px;">
+              Scans Indian NSE 15m signals, sets dynamic SL & Target (ATR), and enters/exits trades autonomously!
+            </div>
+          </div>
+          <button class="btn btn-bullish btn-sm" onclick="triggerAiAutoTradeNow()" id="btn-trigger-ai-trade">
+            ⚡ Run AI Auto-Trade Scan
+          </button>
+        </div>
+      </div>
+
+      <!-- Win / Loss Performance KPI Cards -->
+      <div class="portfolio-kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">Total Equity</div>
+          <div class="kpi-val text-cyan" id="kpi-equity">₹1,00,000</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Available Cash</div>
+          <div class="kpi-val" id="kpi-cash">₹1,00,000</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">🏆 Winning Trades (Profit)</div>
+          <div class="kpi-val text-bullish" id="kpi-win-trades">0 Wins (+₹0)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">🛑 Losing Trades (Loss)</div>
+          <div class="kpi-val text-bearish" id="kpi-loss-trades">0 Losses (-₹0)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">🎯 AI Win Rate</div>
+          <div class="kpi-val text-cyan" id="kpi-winrate">0.0%</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Net Realized P&L</div>
+          <div class="kpi-val" id="kpi-realized-pnl">₹0.00</div>
+        </div>
+      </div>
+
+
+      <!-- Trade Execution Ticket -->
+      <div class="trade-ticket-card">
+        <div style="font-weight:700; font-size:1rem; margin-bottom:12px;">Virtual Order Ticket</div>
+        
+        <div class="order-type-tabs">
+          <button type="button" class="order-type-btn active buy-active" id="order-btn-buy">BUY / LONG</button>
+          <button type="button" class="order-type-btn" id="order-btn-sell">SELL / SHORT</button>
+        </div>
+
+        <form id="trade-ticket-form">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Symbol</label>
+              <select id="order-symbol-select" class="custom-select stock-select-dropdown" onchange="selectStock(this.value)">
+                <!-- JS populated -->
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Current Price</label>
+              <input type="number" id="order-price-input" step="0.01" readonly style="opacity:0.8;">
+            </div>
+            <div class="form-group">
+              <label>Quantity</label>
+              <input type="number" id="order-qty-input" value="10" min="1" required>
+              <div class="quick-qty-chips">
+                <span class="qty-chip" data-add="10">+10</span>
+                <span class="qty-chip" data-add="25">+25</span>
+                <span class="qty-chip" data-add="50">+50</span>
+                <span class="qty-chip" data-add="100">+100</span>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Stop Loss (SL)</label>
+              <input type="number" id="order-sl-input" step="0.01" placeholder="Optional SL">
+            </div>
+            <div class="form-group">
+              <label>Target Price (TP)</label>
+              <input type="number" id="order-tp-input" step="0.01" placeholder="Optional TP">
+            </div>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px;">
+            <div style="font-size:0.85rem; color:var(--text-muted);">
+              Estimated Order Value: <strong id="order-total-est" style="color:var(--text-primary); font-size:1rem;">₹0.00</strong>
+            </div>
+            <button type="submit" class="btn btn-bullish" id="order-submit-btn">
+              Execute Virtual BUY
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Open Positions Table -->
+      <div style="font-weight:700; font-size:1rem; margin-bottom:8px;">Active Positions</div>
+      <div class="table-wrap">
+        <table class="custom-table">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Side</th>
+              <th>Qty</th>
+              <th>Entry</th>
+              <th>CMP</th>
+              <th>Unrealized P&L</th>
+              <th>SL / TP</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="open-positions-tbody">
+            <!-- Populated via JS -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Closed Trades History Table -->
+      <div style="font-weight:700; font-size:1rem; margin:16px 0 8px 0; display:flex; justify-content:space-between; align-items:center;">
+        <span>📜 AI Trade History & Journal</span>
+        <span style="font-size:0.75rem; color:var(--text-muted);">Realized Profits & Losses</span>
+      </div>
+      <div class="table-wrap">
+        <table class="custom-table">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Side</th>
+              <th>Qty</th>
+              <th>Entry Price</th>
+              <th>Exit Price</th>
+              <th>Net P&L</th>
+              <th>Result</th>
+              <th>Exit Trigger</th>
+              <th>Mode</th>
+            </tr>
+          </thead>
+          <tbody id="closed-trades-tbody">
+            <!-- Populated via JS -->
+          </tbody>
+        </table>
+      </div>
+
+    </section>
+
+    <!-- TAB 5: Settings & Custom Watchlists -->
+    <section id="view-settings" class="view-section">
+      <div class="section-title-bar">
+        <h1 class="section-title">⚙️ Settings & Mobile App Setup</h1>
+      </div>
+
+      <!-- Server URL Config for Android APK -->
+      <div class="trade-ticket-card">
+        <div style="font-weight:700; font-size:1rem; margin-bottom:8px; color:var(--color-cyan);">🌐 Bot Backend Connection</div>
+        <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px;">
+          Configure the Backend URL for this Android App:
+        </p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <input type="text" id="server-url-input" placeholder="http://192.168.29.28:8000" style="flex:1; min-width:220px; padding:8px 12px; background:var(--bg-surface); border:1px solid var(--border-color); color:white; border-radius:6px; font-family:var(--font-mono);">
+          <button class="btn btn-primary" onclick="saveServerConfig()">💾 Save & Connect</button>
+        </div>
+      </div>
+
+      <!-- Angel One SmartAPI Integration Card -->
+      <div class="trade-ticket-card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <div style="font-weight:700; font-size:1rem; color:var(--color-primary);">👼 Angel One SmartAPI (Official NSE Gateway)</div>
+          <span id="angel-status-badge" style="font-size:0.75rem; padding:3px 8px; border-radius:12px; background:rgba(255,255,255,0.08); color:var(--text-muted);">⚪ Not Configured</span>
+        </div>
+        <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px;">
+          Connect your Angel One SmartAPI for official real-time NSE market data and direct tick streaming:
+        </p>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px;">
+          <div>
+            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">SmartAPI Key</label>
+            <input type="text" id="angel-api-key" placeholder="Enter API Key" style="width:100%; padding:8px; background:var(--bg-surface); border:1px solid var(--border-color); color:white; border-radius:6px; font-family:var(--font-mono); font-size:0.8rem;">
+          </div>
+          <div>
+            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">Client Code (User ID)</label>
+            <input type="text" id="angel-client-code" placeholder="e.g. A123456" style="width:100%; padding:8px; background:var(--bg-surface); border:1px solid var(--border-color); color:white; border-radius:6px; font-family:var(--font-mono); font-size:0.8rem;">
+          </div>
+          <div>
+            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">Login PIN / Password</label>
+            <input type="password" id="angel-password" placeholder="4 or 6 digit PIN" style="width:100%; padding:8px; background:var(--bg-surface); border:1px solid var(--border-color); color:white; border-radius:6px; font-family:var(--font-mono); font-size:0.8rem;">
+          </div>
+          <div>
+            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">TOTP Secret Seed</label>
+            <input type="password" id="angel-totp" placeholder="Authenticator Base32 Seed" style="width:100%; padding:8px; background:var(--bg-surface); border:1px solid var(--border-color); color:white; border-radius:6px; font-family:var(--font-mono); font-size:0.8rem;">
+          </div>
+        </div>
+        <button class="btn btn-primary" style="width:100%; font-size:0.85rem;" onclick="saveAngelConfig()">⚡ Authenticate & Connect Angel One</button>
+      </div>
+
+      <!-- Watchlist Management Card -->
+      <div class="trade-ticket-card">
+        <div style="font-weight:700; font-size:1rem; margin-bottom:10px;">Add Custom Indian Stock Symbol</div>
+        <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px;">
+          Add any Indian NSE stock (e.g. <code>BAJFINANCE.NS</code>, <code>WIPRO.NS</code>, <code>MARUTI.NS</code>, <code>TMCV.NS</code>).
+        </p>
+
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <input type="text" id="new-stock-symbol" placeholder="Symbol (e.g. WIPRO.NS)" style="flex:1; min-width:180px; padding:8px 12px; background:var(--bg-surface); border:1px solid var(--border-color); color:white; border-radius:6px;">
+          <input type="text" id="new-stock-name" placeholder="Company Name (e.g. Wipro Limited)" style="flex:2; min-width:200px; padding:8px 12px; background:var(--bg-surface); border:1px solid var(--border-color); color:white; border-radius:6px;">
+          <button class="btn btn-primary" onclick="addCustomStock()">+ Add to Watchlist</button>
+        </div>
+      </div>
+
+
+      <!-- Android APK Guide Card -->
+      <div class="trade-ticket-card">
+        <div style="font-weight:700; font-size:1rem; margin-bottom:10px; color:var(--color-cyan);">📱 Android App (APK) Installation</div>
+        <div style="font-size:0.85rem; color:var(--text-secondary); line-height:1.6;">
+          <p>You can run this application on your Android phone in two easy ways:</p>
+          <br>
+          <p><strong>Method 1: Instant 1-Tap PWA App on Phone (Zero Setup)</strong></p>
+          <ol style="margin-left:20px; margin-top:4px;">
+            <li>Connect your Android phone and PC to the same Wi-Fi.</li>
+            <li>Find your PC IP address (e.g. <code>192.168.1.X:8000</code>).</li>
+            <li>Open Chrome on your phone, navigate to <code>http://&lt;PC_IP&gt;:8000</code>.</li>
+            <li>Tap Chrome menu (⋮) -> <strong>"Install app"</strong> or <strong>"Add to Home screen"</strong>. It installs as a full standalone app with app icon on your phone!</li>
+          </ol>
+          <br>
+          <p><strong>Method 2: Compile Native Android APK with Capacitor</strong></p>
+          <p>We have included a full <code>android_app</code> project folder with automated scripts to bundle and compile a native <code>.apk</code> file.</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ========================================================================
+       Mobile Bottom Navigation Bar
+       ======================================================================== -->
+  <nav class="bottom-nav">
+    <button class="nav-item nav-btn active" data-tab="screener">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/></svg>
+      <span>Screener</span>
+    </button>
+    <button class="nav-item nav-btn" data-tab="chart">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 9l-5 5-4-4-6 6"/></svg>
+      <span>15m Chart</span>
+    </button>
+    <button class="nav-item nav-btn" data-tab="news">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6Z"/></svg>
+      <span>News</span>
+    </button>
+    <button class="nav-item nav-btn" data-tab="trading">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="14" x="2" y="7" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+      <span>Paper Trade</span>
+    </button>
+    <button class="nav-item nav-btn" data-tab="settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <span>Settings</span>
+    </button>
+  </nav>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Scripts -->
+  <script src="js/charts.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
+
