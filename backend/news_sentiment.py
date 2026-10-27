@@ -4,6 +4,7 @@ Extracts news via Google News RSS & Yahoo Finance and computes sentiment scores.
 Includes optional Gemini AI synthesis when API key is present.
 """
 import urllib.parse
+import urllib.request
 import re
 from datetime import datetime
 import feedparser
@@ -96,7 +97,10 @@ class NewsSentimentAnalyzer:
         rss_url = f"https://news.google.com/rss/search?q={encoded_q}&hl={hl}&gl={gl}&ceid={ceid}"
         
         try:
-            feed = feedparser.parse(rss_url)
+            req = urllib.request.Request(rss_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            with urllib.request.urlopen(req, timeout=4.0) as resp:
+                xml_data = resp.read()
+            feed = feedparser.parse(xml_data)
             for entry in feed.entries[:limit]:
                 # Extract clean title and publisher
                 title_full = entry.title
@@ -146,8 +150,8 @@ class NewsSentimentAnalyzer:
     def score_headline(self, headline: str) -> dict:
         """Evaluate sentiment score for a single headline using financial lexicons."""
         text = headline.lower()
-        # Clean punctuation
-        words = re.findall(r"\b[a-zA-Z\-]+\b", text)
+        # Clean punctuation, retain alphanumeric and hyphens
+        words = re.findall(r"\b[a-zA-Z0-9\-]+\b", text)
 
         score = 0.0
         negated = False
@@ -231,8 +235,18 @@ class NewsSentimentAnalyzer:
 
         for item in news_items:
             res = self.score_headline(item["title"])
+            impact = self.predict_price_impact(item["title"], res["score"])
+            item["score"] = res["score"]
             item["sentiment_score"] = res["score"]
             item["sentiment"] = res["sentiment"]
+            item["matched_terms"] = res.get("matched_terms", [])
+            item["catalyst"] = impact["catalyst"]
+            item["urgency"] = impact["urgency"]
+            item["projected_move"] = impact["projected_move"]
+            item["action_advice"] = impact["action_advice"]
+            item["why_action"] = impact["why_action"]
+            item["positive_factors"] = impact["positive_factors"]
+            item["negative_risks"] = impact["negative_risks"]
             total_score += res["score"]
 
             if res["sentiment"] == "POSITIVE":
@@ -268,6 +282,11 @@ class NewsSentimentAnalyzer:
                                               net_score=net_score, 
                                               label=label)
 
+        # Predict direct price impact of top headline
+        top_headline = scored_articles[0]["title"] if scored_articles else ""
+        top_score = scored_articles[0].get("sentiment_score", scored_articles[0].get("score", 0.0)) if scored_articles else 0.0
+        price_impact = self.predict_price_impact(top_headline, top_score)
+
         return {
             "symbol": symbol,
             "company_name": company_name or symbol,
@@ -281,8 +300,170 @@ class NewsSentimentAnalyzer:
             },
             "total_articles": total,
             "articles": scored_articles,
-            "ai_summary": ai_summary
+            "ai_summary": ai_summary,
+            "price_impact": price_impact
         }
+
+    def predict_price_impact(self, headline: str, score: float) -> dict:
+        """
+        Deep Catalyst Evaluator: Predicts short-term price movement %, urgency, trading recommendation,
+        and provides clear explanations of why to buy/sell with positive/negative factor breakdown.
+        """
+        h_lower = headline.lower()
+        catalyst = "GENERAL_NEWS"
+        urgency = "NORMAL"
+        expected_move = "+0.5% to +1.2%" if score > 0 else ("-0.5% to -1.2%" if score < 0 else "0.0%")
+        action = "HOLD / MONITOR"
+        why_action = "Current developments appear largely priced in; monitor for high-volume technical continuation."
+        positive_factors = []
+        negative_risks = []
+
+        # 1. Earnings / Revenue Surprises
+        if any(k in h_lower for k in ["profit jumps", "revenue surge", "q1", "q2", "q3", "q4", "beat", "record high", "net profit", "results", "earnings"]):
+            catalyst = "QUARTERLY_EARNINGS"
+            if score >= 0:
+                urgency = "⚡ HIGH IMPACT"
+                expected_move = "+2.0% to +4.8% Upside Surge"
+                action = "BUY ON BREAKOUT"
+                why_action = "Quarterly earnings beat street consensus. Revenue and EBITDA margin growth will trigger institutional accumulation above intraday VWAP."
+                positive_factors = ["Net profit & margin expansion", "Institutional accumulation volume", "Strong EPS trajectory"]
+                negative_risks = ["Profit booking near 52-week high", "Broader market drag"]
+            else:
+                urgency = "⚡ HIGH IMPACT"
+                expected_move = "-2.5% to -5.0% Sharp Pullback"
+                action = "AVOID / PROFIT BOOK"
+                why_action = "Earnings or operating margins missed expectations, creating risk of institutional target downgrades and long unwinding."
+                positive_factors = ["Potential bargain hunting at deep support"]
+                negative_risks = ["EBITDA margin contraction", "Institutional sell-offs", "Breakdown below 15m support"]
+
+        # 2. Mega Order Wins, Contracts & Expansion
+        elif any(k in h_lower for k in ["order win", "contract", "deal", "partnership", "expansion", "buyback", "acquisition", "bonus"]):
+            catalyst = "ORDER_WIN_EXPANSION"
+            urgency = "⚡ HIGH IMPACT"
+            expected_move = "+1.8% to +3.8% Bullish Rally"
+            action = "ACCUMULATE ON DIP"
+            why_action = "Major commercial order wins enhance multi-year revenue visibility and cash flow predictability, providing strong fundamental backing."
+            positive_factors = ["Multi-year order book expansion", "Market share gains", "Direct balance sheet accretion"]
+            negative_risks = ["Execution turnaround times", "Working capital cycle strain"]
+
+        # 3. Regulatory / SEBI / Tax Raids / Scandals
+        elif any(k in h_lower for k in ["sebi", "probe", "raid", "scam", "fraud", "penalty", "default", "downgrade", "halt", "lawsuit"]):
+            catalyst = "REGULATORY_CRISIS"
+            urgency = "🚨 BREAKING FLASH"
+            expected_move = "-3.5% to -7.0% Panic Drop"
+            action = "🚨 EMERGENCY EXIT / DO NOT BUY"
+            why_action = "Regulatory investigation or governance probe creates severe institutional risk, prompting heavy FII/DII liquidation."
+            positive_factors = []
+            negative_risks = ["Severe institutional selling pressure", "Corporate governance overhang", "Potential circuit lower locks"]
+
+        # 4. RBI / Central Bank Macro Announcements
+        elif any(k in h_lower for k in ["rbi", "rate cut", "repo rate", "inflation", "monetary policy", "budget"]):
+            catalyst = "MACRO_RBI_POLICY"
+            urgency = "⚡ HIGH IMPACT"
+            expected_move = "+1.5% to +2.8% Volatility"
+            action = "WATCH HIGH BETA STOCKS"
+            why_action = "Monetary policy shifts alter capital borrowing rates; banking, auto, and realty stocks will exhibit heightened beta volatility."
+            positive_factors = ["Systemic credit liquidity growth", "Lower funding costs for retail loans"]
+            negative_risks = ["Inflation sticky points", "Currency exchange fluctuations"]
+
+        # 5. Shareholder Rewards (Dividends, Splits, Buyback)
+        elif any(k in h_lower for k in ["dividend", "split", "bonus issue", "buyback"]):
+            catalyst = "SHAREHOLDER_REWARD"
+            urgency = "⚡ HIGH IMPACT"
+            expected_move = "+1.5% to +3.2% Upside"
+            action = "ACCUMULATE FOR YIELD"
+            why_action = "Capital return announcements highlight management confidence in strong free cash flows and surplus capital."
+            positive_factors = ["Direct cash distribution to shareholders", "Free-float supply reduction", "Retail & institutional interest"]
+            negative_risks = ["Ex-dividend technical price adjustment"]
+
+        # 6. General Positive
+        elif score > 0.15:
+            catalyst = "POSITIVE_MOMENTUM"
+            urgency = "NORMAL"
+            expected_move = "+0.8% to +1.8% Bullish Bias"
+            action = "BUY ON PULLBACK"
+            why_action = "Constructive developments and positive sentiment create a favourable environment for dip buyers above EMA 21."
+            positive_factors = ["Constructive industry tailwinds", "Positive market sentiment tone"]
+            negative_risks = ["Need high volume confirmation for explosive follow-through"]
+
+        # 7. General Negative
+        elif score < -0.15:
+            catalyst = "NEGATIVE_HEADWIND"
+            urgency = "NORMAL"
+            expected_move = "-0.8% to -2.0% Downside Pressure"
+            action = "AVOID / WAIT FOR BASE"
+            why_action = "Negative media coverage or sectoral headwinds create overhead supply; wait until a solid technical base forms."
+            positive_factors = ["Oversold technical bounce potential"]
+            negative_risks = ["Seller dominance on intraday rallies", "Downside continuation risk"]
+
+        return {
+            "catalyst": catalyst,
+            "urgency": urgency,
+            "projected_move": expected_move,
+            "action_advice": action,
+            "why_action": why_action,
+            "positive_factors": positive_factors,
+            "negative_risks": negative_risks,
+            "headline": headline
+        }
+
+    def fetch_market_wide_flash_news(self, universe: list) -> list:
+        """
+        Scan breaking financial news across the entire NSE universe and link catalysts directly to stocks.
+        """
+        flash_items = []
+        stop_words = {
+            "india", "limited", "ltd", "bank", "power", "motors", "industries",
+            "services", "energy", "finance", "holdings", "enterprise", "corporation",
+            "bharat", "national", "state", "group", "life", "corp", "general"
+        }
+        try:
+            url = "https://news.google.com/rss/search?q=NSE+stocks+OR+Sensex+OR+quarterly+results+OR+order+win&hl=en-IN&gl=IN&ceid=IN:en"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            with urllib.request.urlopen(req, timeout=4.5) as resp:
+                xml_data = resp.read()
+            feed = feedparser.parse(xml_data)
+            for entry in feed.entries[:14]:
+                title = entry.title
+                title_lower = title.lower()
+                link = entry.get("link", "")
+                pub = entry.get("published", "")
+                scored = self.score_headline(title)
+                impact = self.predict_price_impact(title, scored["score"])
+
+                # Detect which stock is affected with exact word-boundary matching
+                matched_stock = None
+                for stock in universe:
+                    short_sym = stock["symbol"].replace(".NS", "").replace("^", "").lower()
+                    if len(short_sym) >= 3 and re.search(r"\b" + re.escape(short_sym) + r"\b", title_lower):
+                        matched_stock = stock
+                        break
+
+                    name_parts = [p for p in stock["name"].lower().split() if len(p) > 3 and p not in stop_words]
+                    if any(re.search(r"\b" + re.escape(p) + r"\b", title_lower) for p in name_parts):
+                        matched_stock = stock
+                        break
+
+                flash_items.append({
+                    "title": title,
+                    "published": pub,
+                    "link": link,
+                    "sentiment": scored["sentiment"],
+                    "score": scored["score"],
+                    "matched_symbol": matched_stock["symbol"] if matched_stock else None,
+                    "matched_name": matched_stock["name"] if matched_stock else "Broad Market",
+                    "catalyst": impact["catalyst"],
+                    "urgency": impact["urgency"],
+                    "projected_move": impact["projected_move"],
+                    "action_advice": impact["action_advice"],
+                    "why_action": impact["why_action"],
+                    "positive_factors": impact["positive_factors"],
+                    "negative_risks": impact["negative_risks"]
+                })
+        except Exception as e:
+            print(f"[FlashNews] Error fetching broad news: {e}")
+
+        return flash_items
 
     def _generate_ai_summary(self, clean_name: str, articles: list, net_score: float, label: str) -> str:
         """Produce an AI executive summary of market sentiment."""

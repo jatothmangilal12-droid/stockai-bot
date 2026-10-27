@@ -7,9 +7,12 @@ from backend.config import DB_PATH, DEFAULT_PAPER_BALANCE
 
 
 def get_connection():
-    """Get SQLite database connection with row factory."""
-    conn = sqlite3.connect(DB_PATH)
+    """Get SQLite database connection with row factory and WAL concurrency enabled."""
+    conn = sqlite3.connect(DB_PATH, timeout=15.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=10000;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
     return conn
 
 
@@ -50,7 +53,10 @@ def init_db():
         trade_type TEXT DEFAULT 'AI_AUTONOMOUS', -- 'AI_AUTONOMOUS' or 'MANUAL'
         ai_confidence REAL DEFAULT 0.0,
         ai_reasons TEXT,
-        trade_result TEXT             -- 'WIN' or 'LOSS'
+        trade_result TEXT,            -- 'WIN' or 'LOSS'
+        notes TEXT,
+        post_mortem TEXT,
+        lesson_learned TEXT
     )
     """)
 
@@ -66,6 +72,8 @@ def init_db():
         trade_type TEXT DEFAULT 'AI_AUTONOMOUS',
         trade_result TEXT,
         notes TEXT,
+        post_mortem TEXT,
+        lesson_learned TEXT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
@@ -89,6 +97,12 @@ def init_db():
         cursor.execute("ALTER TABLE positions ADD COLUMN ai_reasons TEXT")
     if "trade_result" not in existing_cols:
         cursor.execute("ALTER TABLE positions ADD COLUMN trade_result TEXT")
+    if "notes" not in existing_cols:
+        cursor.execute("ALTER TABLE positions ADD COLUMN notes TEXT")
+    if "post_mortem" not in existing_cols:
+        cursor.execute("ALTER TABLE positions ADD COLUMN post_mortem TEXT")
+    if "lesson_learned" not in existing_cols:
+        cursor.execute("ALTER TABLE positions ADD COLUMN lesson_learned TEXT")
 
     # Check for missing columns in existing trade_logs table (Auto Migration)
     cursor.execute("PRAGMA table_info(trade_logs)")
@@ -99,6 +113,10 @@ def init_db():
         cursor.execute("ALTER TABLE trade_logs ADD COLUMN trade_result TEXT")
     if "pnl" not in existing_log_cols:
         cursor.execute("ALTER TABLE trade_logs ADD COLUMN pnl REAL DEFAULT 0.0")
+    if "post_mortem" not in existing_log_cols:
+        cursor.execute("ALTER TABLE trade_logs ADD COLUMN post_mortem TEXT")
+    if "lesson_learned" not in existing_log_cols:
+        cursor.execute("ALTER TABLE trade_logs ADD COLUMN lesson_learned TEXT")
 
     # Insert default portfolio if empty
     cursor.execute("SELECT COUNT(*) FROM portfolio")

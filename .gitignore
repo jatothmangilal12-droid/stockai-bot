@@ -1,0 +1,39 @@
+# Environment & Secrets
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Large Binary Files
+*.apk
+*.aab
+cloudflared.exe
+
+# Node & Android Build Artifacts
+node_modules/
+android_app/node_modules/
+android_app/android/.gradle/
+android_app/android/build/
+android_app/android/app/build/
+android_app/android/local.properties
+.gradle/
+build/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

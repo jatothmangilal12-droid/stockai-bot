@@ -1,0 +1,17 @@
+{
+  "appId": "com.stockai.bot",
+  "appName": "StockAI Bot",
+  "webDir": "www",
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  },
+  "server": {
+    "cleartext": true,
+    "androidScheme": "http"
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

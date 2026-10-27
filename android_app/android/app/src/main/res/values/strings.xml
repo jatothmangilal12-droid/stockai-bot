@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">StockAI Bot</string>
+    <string name="title_activity_main">StockAI Bot</string>
+    <string name="package_name">com.stockai.bot</string>
+    <string name="custom_url_scheme">com.stockai.bot</string>
+</resources>
