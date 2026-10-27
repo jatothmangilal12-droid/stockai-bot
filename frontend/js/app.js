@@ -3939,24 +3939,37 @@ async function checkEodAutoSquareOff() {
   const dayName = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', weekday: 'short' }).format(new Date());
   const isMarketDay = dayName !== 'Sat' && dayName !== 'Sun';
 
-  // Auto-square-off at 03:15 PM IST (totalMins >= 915) on live market days
-  if (isMarketDay && totalMins >= 915) {
-    const localPositions = JSON.parse(localStorage.getItem('stockai_open_positions') || '[]');
-    const intradayPositions = localPositions.filter(p => p.product_type === 'INTRADAY' || !p.product_type);
-    if (intradayPositions.length > 0) {
-      // Trigger broker-level square-off for real orders
-      if (intradayPositions.some(p => p.is_real) || state.executionMode === 'REAL_BROKER') {
-        try {
-          await fetch(`${API_BASE}/api/broker/square-off-all`, { method: 'POST' });
-        } catch (e) {}
-      }
-
-      intradayPositions.forEach(pos => {
-        closePosition(pos.id, Number(pos.current_price) || Number(pos.entry_price), 'EOD_AUTO_SQUAREOFF');
-      });
-      showToast(`⚡ 03:15 PM EOD Square-Off: Auto-closed ${intradayPositions.length} Intraday positions before market close.`, 'info');
-    }
+  // Strictly execute ONLY between 03:15 PM and 03:30 PM IST on live trading market days
+  if (!isMarketDay || totalMins < 915 || totalMins > 930) {
+    return;
   }
+
+  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+  if (localStorage.getItem('stockai_eod_squareoff_done') === todayStr) {
+    return; // Already executed today once!
+  }
+
+  const localPositions = JSON.parse(localStorage.getItem('stockai_open_positions') || '[]');
+  const intradayPositions = localPositions.filter(p => p.product_type === 'INTRADAY' || !p.product_type);
+  if (intradayPositions.length === 0) {
+    return;
+  }
+
+  // Mark done immediately to prevent re-entrant second loop triggers
+  localStorage.setItem('stockai_eod_squareoff_done', todayStr);
+
+  // Trigger broker-level square-off for real orders
+  if (intradayPositions.some(p => p.is_real) || state.executionMode === 'REAL_BROKER') {
+    try {
+      await fetch(`${API_BASE}/api/broker/square-off-all`, { method: 'POST' });
+    } catch (e) {}
+  }
+
+  intradayPositions.forEach(pos => {
+    closePosition(pos.id, Number(pos.current_price) || Number(pos.entry_price), 'EOD_AUTO_SQUAREOFF');
+  });
+
+  showToast(`⚡ 03:15 PM EOD Square-Off: Auto-closed ${intradayPositions.length} Intraday positions before market close.`, 'info');
 }
 
 async function resetPortfolioPrompt() {
@@ -4549,10 +4562,32 @@ function initWebSocket() {
   } catch (err) {}
 }
 
-// Toast System
+// Toast System with Anti-Spam Duplicate Suppression and Stack Limit
+const _recentToastsMap = new Map();
+
 function showToast(message, type = 'info') {
+  if (!message) return;
   const container = document.getElementById('toast-container');
   if (!container) return;
+
+  const now = Date.now();
+  // Suppress identical duplicate toasts within 8 seconds
+  if (_recentToastsMap.has(message) && (now - _recentToastsMap.get(message)) < 8000) {
+    return;
+  }
+  _recentToastsMap.set(message, now);
+
+  // Clean old entries from cache
+  if (_recentToastsMap.size > 50) {
+    for (const [k, v] of _recentToastsMap.entries()) {
+      if (now - v > 15000) _recentToastsMap.delete(k);
+    }
+  }
+
+  // Cap maximum visible toasts to 2 at any time (removes oldest if overflowing)
+  while (container.children.length >= 2) {
+    container.removeChild(container.firstChild);
+  }
 
   const toast = document.createElement('div');
   toast.className = 'toast';
@@ -4565,8 +4600,8 @@ function showToast(message, type = 'info') {
   container.appendChild(toast);
   setTimeout(() => {
     toast.style.opacity = '0';
-    setTimeout(() => toast.remove(), 300);
-  }, 4000);
+    setTimeout(() => toast.remove(), 250);
+  }, 3500);
 }
 
 // =============================================================================
