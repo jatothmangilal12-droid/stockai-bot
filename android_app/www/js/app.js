@@ -8,20 +8,15 @@ function getApiBase() {
   let saved = localStorage.getItem('stockai_server_url');
   if (saved) {
     saved = saved.trim().replace(/\/+$/, '');
-    // If user mistakenly entered their public Internet IP (49.x.x.x) into Server URL, fallback safely
-    if (saved.includes('49.43.') || saved.includes('49.')) {
-      console.warn('Public Internet IP detected in Server URL. Falling back to local LAN.');
-      return 'http://192.168.29.28:8000';
-    }
     if (!saved.startsWith('http://') && !saved.startsWith('https://')) {
       saved = 'http://' + saved;
     }
     return saved;
   }
 
-  // If running inside Capacitor / Android Webview
+  // If running inside Capacitor / Android Webview or file:// protocol, connect to AWS Cloud Server
   if (window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && !window.location.port)) {
-    return 'http://192.168.29.28:8000';
+    return 'http://15.206.37.199:8000';
   }
   return window.location.origin;
 }
@@ -460,6 +455,9 @@ function switchTab(tabId) {
     loadAiFactorMatrix();
   } else if (tabId === 'news') {
     loadFlashNews();
+  } else if (tabId === 'settings') {
+    initServerConfigUI();
+    loadAngelStatus();
   }
 }
 
@@ -4179,6 +4177,14 @@ async function loadAngelStatus() {
         badge.style.color = 'var(--color-bullish)';
         badge.style.background = 'rgba(0, 230, 118, 0.15)';
       }
+      const keyInput = document.getElementById('angel-api-key');
+      const ccInput = document.getElementById('angel-client-code');
+      const pwInput = document.getElementById('angel-password');
+      const totpInput = document.getElementById('angel-totp');
+      if (keyInput && !keyInput.value) keyInput.placeholder = '•••••••• (Connected on Server)';
+      if (ccInput && !ccInput.value) ccInput.placeholder = `${data.client_code} (Active)`;
+      if (pwInput && !pwInput.value) pwInput.placeholder = '•••• (Saved on Server)';
+      if (totpInput && !totpInput.value) totpInput.placeholder = '•••••••••••• (Auto-TOTP Active)';
       fetchAngelDematHoldings();
       fetchAngelRmsFunds();
     } else if (data.configured) {
@@ -4205,6 +4211,32 @@ async function saveAngelConfig() {
   const clientCode = document.getElementById('angel-client-code')?.value.trim();
   const password = document.getElementById('angel-password')?.value.trim();
   const totpSecret = document.getElementById('angel-totp')?.value.trim();
+
+  // If user clicks without filling new credentials, test and refresh existing server authentication
+  if (!apiKey && !clientCode && !password && !totpSecret) {
+    showToast('Checking active Angel One session on server...', 'info');
+    try {
+      const testRes = await fetch(`${API_BASE}/api/broker/rms`);
+      if (testRes.ok) {
+        const testData = await testRes.json();
+        if (testData.status) {
+          showToast(`⚡ Angel One connected! Available Cash: ₹${testData.net || testData.available_cash}`, 'success');
+          loadAngelStatus();
+          return;
+        }
+      }
+      // If RMS failed, try re-triggering login endpoint on server
+      const loginRes = await fetch(`${API_BASE}/api/settings/angel-one`);
+      if (loginRes.ok) {
+        const lData = await loginRes.json();
+        if (lData.authenticated) {
+          showToast(`⚡ Angel One session verified: ${lData.client_code}`, 'success');
+          loadAngelStatus();
+          return;
+        }
+      }
+    } catch (e) {}
+  }
 
   if (!apiKey || !clientCode || !password || !totpSecret) {
     showToast('Please fill all 4 fields: API Key, Client Code, PIN, and TOTP', 'error');
