@@ -4223,23 +4223,12 @@ function tickOpenPositionsLive() {
     const oldCmp = Number(pos.current_price) || Number(pos.entry_price) || 1000;
     let newCmp = oldCmp;
 
-    // 1. Direct Real Quote from Angel One (Instant snap, zero smoothing lag!)
-    if (state.latestLivePrices && state.latestLivePrices[pos.symbol]) {
-      newCmp = Number(state.latestLivePrices[pos.symbol]);
-    } else if (!isMarketClosed) {
-      // Micro-fluctuations standard tick only during LIVE market hours (09:15 - 15:30)
-      const basePrice = Number(pos.anchor_price) || Number(pos.entry_price) || oldCmp;
-      const tickSize = oldCmp > 2000 ? 0.20 : (oldCmp > 500 ? 0.10 : 0.05);
-      if (Math.random() > 0.40) {
-        const drift = oldCmp - basePrice;
-        let dir = Math.random() > 0.49 ? 1 : -1;
-        if (Math.abs(drift) > (basePrice * 0.0035)) {
-          dir = drift > 0 ? -1 : 1;
-        }
-        newCmp = Math.max(1, Math.round((oldCmp + dir * tickSize) * 100) / 100);
-      }
+    // 1. Direct Real Quote from Angel One (Exact match to the paise!)
+    const cleanSym = (pos.symbol || '').replace('.NS', '').replace('-EQ', '').toUpperCase();
+    const livePrice = (state.latestLivePrices && (state.latestLivePrices[pos.symbol] || state.latestLivePrices[cleanSym])) || null;
+    if (livePrice && Number(livePrice) > 0) {
+      newCmp = Number(livePrice);
     } else {
-      // Market is CLOSED: Strictly freeze price at official closing price!
       newCmp = oldCmp;
     }
 

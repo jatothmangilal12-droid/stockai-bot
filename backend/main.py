@@ -834,42 +834,45 @@ def get_pre_market_battle_plan():
                 bear_score += 3  # Near multi-day breakdown
 
             if bull_score > bear_score and bull_score >= 6:
-                trigger = round(max(last_close, high_5d) * 1.002, 2)
-                tp1 = round(trigger * 1.025, 2)
-                sl = round(trigger * 0.988, 2)
+                # Realistic Intraday Trade: Never buy at 5% peak! Enter at realistic entry with achievable 0.9% target
+                entry_p = round(last_close, 2)
+                tp1 = round(entry_p * 1.009, 2)   # 0.9% Target 1 (Achievable Intraday)
+                tp2 = round(entry_p * 1.018, 2)   # 1.8% Target 2
+                sl = round(entry_p * 0.993, 2)    # 0.7% Stop Loss
                 return {
                     "symbol": sym,
                     "name": name,
                     "action": "BUY",
                     "plan_type": "PRE_MARKET_BUY",
-                    "price": round(last_close, 2),
-                    "trigger_condition": f"BUY if opens above ₹{trigger:.2f}",
+                    "price": entry_p,
+                    "trigger_condition": f"BUY at ₹{entry_p:.2f} (Target ₹{tp1:.2f} | SL ₹{sl:.2f})",
                     "confidence": min(95, 82 + bull_score * 2),
-                    "pattern": "🌅 Pre-Market Bullish Accumulation",
+                    "pattern": "🌅 Pre-Market Bullish Setup",
                     "target_1": tp1,
-                    "target_2": round(trigger * 1.045, 2),
+                    "target_2": tp2,
                     "stop_loss": sl,
-                    "risk_reward_ratio": "1:2.1",
-                    "rationale": f"Daily structure holding above 20 EMA (₹{ema20:.2f}) with {vol_ratio}x accumulation volume; primed for opening breakout above ₹{trigger:.2f}."
+                    "risk_reward_ratio": "1:1.3",
+                    "rationale": f"Holding above 20 EMA (₹{ema20:.2f}) with {vol_ratio}x accumulation volume. Realistic Intraday Target: ₹{tp1:.2f} (+0.9%), SL: ₹{sl:.2f} (-0.7%)."
                 }
             elif bear_score > bull_score and bear_score >= 6:
-                trigger = round(min(last_close, low_5d) * 0.998, 2)
-                tp1 = round(trigger * 0.975, 2)
-                sl = round(trigger * 1.012, 2)
+                entry_p = round(last_close, 2)
+                tp1 = round(entry_p * 0.991, 2)   # 0.9% Target 1
+                tp2 = round(entry_p * 0.982, 2)   # 1.8% Target 2
+                sl = round(entry_p * 1.007, 2)    # 0.7% Stop Loss
                 return {
                     "symbol": sym,
                     "name": name,
                     "action": "SELL",
                     "plan_type": "PRE_MARKET_SELL",
-                    "price": round(last_close, 2),
-                    "trigger_condition": f"SELL / SHORT if opens below ₹{trigger:.2f}",
+                    "price": entry_p,
+                    "trigger_condition": f"SELL / SHORT at ₹{entry_p:.2f} (Target ₹{tp1:.2f} | SL ₹{sl:.2f})",
                     "confidence": min(94, 82 + bear_score * 2),
-                    "pattern": "🌅 Pre-Market Bearish Breakdown",
+                    "pattern": "🌅 Pre-Market Bearish Setup",
                     "target_1": tp1,
-                    "target_2": round(trigger * 0.955, 2),
+                    "target_2": tp2,
                     "stop_loss": sl,
-                    "risk_reward_ratio": "1:2.1",
-                    "rationale": f"Daily breakdown below 20 EMA (₹{ema20:.2f}) with heavy {vol_ratio}x institutional distribution; high-probability morning fall below ₹{trigger:.2f}."
+                    "risk_reward_ratio": "1:1.3",
+                    "rationale": f"Daily breakdown below 20 EMA (₹{ema20:.2f}) with heavy {vol_ratio}x distribution volume. Realistic Intraday Target: ₹{tp1:.2f} (-0.9%), SL: ₹{sl:.2f} (+0.7%)."
                 }
             return None
         except Exception as e:
@@ -1139,27 +1142,28 @@ async def fast_price_tick_broadcaster():
                         batch_quotes = await asyncio.to_thread(angel_client.get_batch_quotes, all_target_symbols)
                         for sym, q in batch_quotes.items():
                             if q.get("price", 0) > 0:
-                                LATEST_PRICES[sym] = round(float(q["price"]), 2)
+                                p = round(float(q["price"]), 2)
+                                clean = sym.replace(".NS", "").replace("-EQ", "").upper()
+                                LATEST_PRICES[clean] = p
+                                LATEST_PRICES[f"{clean}.NS"] = p
+                                LATEST_PRICES[sym] = p
                     except Exception as ex:
                         print(f"[Broadcaster] Angel One quote update error: {ex}")
 
-            # For simulated positions without live quote, provide realistic market walk
-            for r in open_rows:
-                sym = r["symbol"]
-                if sym in LATEST_PRICES and angel_client.is_configured() and angel_client.is_authenticated:
-                    continue
-                base_p = float(r["entry_price"]) if r["entry_price"] else float(r["current_price"])
-                old_p = LATEST_PRICES.get(sym, base_p)
-                # Realistic 2.5% corridor allows positions to legitimately reach SL or TP targets over time!
-                corridor = base_p * 0.025
-                tick_step = 0.25 if base_p > 2000 else (0.10 if base_p > 500 else 0.05)
-                
-                diff = old_p - base_p
-                drift = -0.3 if diff > corridor else (0.3 if diff < -corridor else 0.0)
-                dir_tick = 1 if random.random() < (0.50 + drift) else -1
-                new_p = round(old_p + dir_tick * tick_step * random.choice([1, 2, 3]), 2)
-                new_p = max(round(base_p - corridor, 2), min(round(base_p + corridor, 2), new_p))
-                LATEST_PRICES[sym] = new_p
+            # For simulated positions ONLY if Angel One is NOT configured/offline
+            if not (angel_client.is_configured() and angel_client.is_authenticated):
+                for r in open_rows:
+                    sym = r["symbol"]
+                    base_p = float(r["entry_price"]) if r["entry_price"] else float(r["current_price"])
+                    old_p = LATEST_PRICES.get(sym, base_p)
+                    corridor = base_p * 0.025
+                    tick_step = 0.25 if base_p > 2000 else (0.10 if base_p > 500 else 0.05)
+                    diff = old_p - base_p
+                    drift = -0.3 if diff > corridor else (0.3 if diff < -corridor else 0.0)
+                    dir_tick = 1 if random.random() < (0.50 + drift) else -1
+                    new_p = round(old_p + dir_tick * tick_step * random.choice([1, 2, 3]), 2)
+                    new_p = max(round(base_p - corridor, 2), min(round(base_p + corridor, 2), new_p))
+                    LATEST_PRICES[sym] = new_p
 
             # 2. Update Angel One Research Calls with live prices & auto SL/TP triggers
             await asyncio.to_thread(angel_research.update_live_prices, LATEST_PRICES)

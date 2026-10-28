@@ -312,50 +312,52 @@ class SignalEvaluator:
             reasons.append("🛡️ Trend Lock Shield: Daily Macro Trend is BEARISH. Long buying on intraday relief bounce is prohibited! Waiting for resistance rejection to SELL.")
 
         # =====================================================================
-        # 8D. Daily Range Exhaustion Shield (Prevents Buying at Peaks & Selling at Bottoms)
+        # 8D. Daily Range Exhaustion & Top-Buyer Trap Shield (User Mandate)
+        # Prevents buying when already up 3-5% near day's high, and prevents impossible targets!
         # =====================================================================
         exhaustion_ratio = float(latest.get("Exhaustion_Ratio", 0.5))
         remaining_range = float(latest.get("Remaining_Range", atr * 1.5))
         today_open = float(latest.get("Today_Open", current_price))
         today_move_pct = round(((current_price - today_open) / today_open) * 100, 2) if today_open else 0.0
+        day_high = float(latest.get("High", current_price))
+        day_low = float(latest.get("Low", current_price))
 
-        if exhaustion_ratio >= 0.75:
-            if today_move_pct > 1.2:
-                reasons.append(f"⚠️ Range Exhaustion ({int(exhaustion_ratio*100)}% ATR used, up {today_move_pct:+.1f}% today): Expected daily move is already completed. High risk of mean-reversion pullback! DO NOT FOMO buy at day's peak.")
-                if "BUY" in action:
-                    action = "NEUTRAL"
-                    confidence = min(confidence, 54)
-            elif today_move_pct < -1.2:
-                reasons.append(f"⚠️ Downside Exhaustion ({int(exhaustion_ratio*100)}% ATR used, down {today_move_pct:+.1f}% today): Selling climax reached. High risk of short-covering bounce! DO NOT Short Sell at day's low.")
-                if "SELL" in action:
-                    action = "NEUTRAL"
-                    confidence = min(confidence, 54)
+        # Absolute Peak Protection: If stock is already up >= 2.0% or within 0.4% of Day's High with RSI > 65
+        if today_move_pct >= 2.0 or (day_high > 0 and current_price >= day_high * 0.996 and rsi > 64):
+            reasons.append(f"⚠️ Top-Buyer Trap Shield: Stock is already up +{today_move_pct:.1f}% today near day's high (₹{day_high:.2f}). Institutions take profit at peaks! High risk of pullback. Buying at day's peak is BLOCKED.")
+            if "BUY" in action:
+                action = "NEUTRAL"
+                confidence = min(confidence, 42)
+        elif today_move_pct <= -2.0 or (day_low > 0 and current_price <= day_low * 1.004 and rsi < 36):
+            reasons.append(f"⚠️ Bottom-Seller Trap Shield: Stock is already down {today_move_pct:.1f}% today near day's low (₹{day_low:.2f}). Short-covering bounce imminent! Shorting at the bottom is BLOCKED.")
+            if "SELL" in action:
+                action = "NEUTRAL"
+                confidence = min(confidence, 42)
 
         # =====================================================================
-        # 9. Dynamic Volatility & Category-Based Target & Stop Loss Engine
-        # Provides professional breathing room (1.2% - 1.8% SL) to eliminate premature stop hunts!
+        # 9. Realistic Intraday Target & Stop Loss Engine (User Mandate)
+        # Strictly realistic achievable intraday ranges (0.8% - 1.2% Target, 0.6% - 0.8% SL)
+        # With 5x MIS Leverage: 1.0% stock move = 5.0% profit on capital!
         # =====================================================================
         cmp = round(current_price, 2)
         effective_atr = atr * vix_sl_mult
-        r1 = float(latest.get("Pivot_R1", cmp + remaining_range))
-        s1 = float(latest.get("Pivot_S1", cmp - remaining_range))
 
         sym_upper = symbol.upper()
         is_high_beta = any(hb in sym_upper for hb in ["ZOMATO", "SUZLON", "TRENT", "DIXON", "HAL", "BEL", "RVNL", "IRFC", "TATAPOWER", "TMCV"])
         is_mega_cap = any(mc in sym_upper for mc in ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "BHARTIARTL", "ITC", "LT", "KOTAKBANK", "AXISBANK"])
 
         if is_high_beta:
-            base_sl = cmp * 0.018    # 1.8% Stop Loss (protects against high-beta whipsaws)
-            base_tp1 = cmp * 0.028   # 2.8% Target 1 (1:1.55 RRR)
-            base_tp2 = cmp * 0.045   # 4.5% Target 2
+            base_sl = cmp * 0.008    # 0.8% Stop Loss
+            base_tp1 = cmp * 0.012   # 1.2% Target 1 (Realistic Intraday)
+            base_tp2 = cmp * 0.020   # 2.0% Target 2
         elif is_mega_cap:
-            base_sl = cmp * 0.013    # 1.3% Stop Loss (healthy breathing room)
-            base_tp1 = cmp * 0.021   # 2.1% Target 1 (1:1.6 RRR)
-            base_tp2 = cmp * 0.035   # 3.5% Target 2
+            base_sl = cmp * 0.006    # 0.6% Stop Loss
+            base_tp1 = cmp * 0.008   # 0.8% Target 1 (Highly achievable on large caps)
+            base_tp2 = cmp * 0.015   # 1.5% Target 2
         else:
-            base_sl = cmp * 0.015    # 1.5% Stop Loss
-            base_tp1 = cmp * 0.024   # 2.4% Target 1 (1:1.6 RRR)
-            base_tp2 = cmp * 0.038   # 3.8% Target 2
+            base_sl = cmp * 0.007    # 0.7% Stop Loss
+            base_tp1 = cmp * 0.010   # 1.0% Target 1
+            base_tp2 = cmp * 0.018   # 1.8% Target 2
 
         # Time-of-Day Adaptive Target & Risk Scaling (Indian Market IST Session Awareness)
         # Market open: 09:15, close: 15:30 IST. Last hour: 14:00 - 15:00. Square-off cutoff: 15:15.
