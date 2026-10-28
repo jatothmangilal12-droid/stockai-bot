@@ -65,7 +65,11 @@ const state = {
   pendingApprovalTrades: [],
   executionMode: localStorage.getItem('stockai_execution_mode') || 'PAPER',
   excludeDematHoldings: localStorage.getItem('stockai_exclude_demat') !== 'false',
-  dematHoldings: []
+  dematHoldings: [],
+  angelConnected: false,
+  lastAngelTickTime: 0,
+  priceSource: 'AngelOne_Live',
+  isFeedStale: false
 };
 
 function parseUtcDate(str) {
@@ -1925,6 +1929,12 @@ async function submitTradeOrder() {
   const cost = qty * price;
   const marginRequired = Math.round((cost / INTRADAY_LEVERAGE) * 100) / 100;
 
+  // Capital Protection: Block execution if Angel One feed is offline or stale
+  if (state.executionMode === 'REAL_BROKER' && (state.isFeedStale || !state.lastAngelTickTime)) {
+    showToast('⚠️ Market feed is offline or stale (>3s). Live orders are blocked to prevent bad fills.', 'error');
+    return;
+  }
+
   // Real Angel One Broker Execution Branch
   if (state.executionMode === 'REAL_BROKER') {
     const cleanSym = symbol.replace('.NS', '').replace('-EQ', '').toUpperCase();
@@ -2757,6 +2767,10 @@ async function executeTradeWithCustomQty(sig, qty, customPrice, customSl, custom
 
   // Real Angel One Broker execution if in REAL_BROKER mode
   if (state.executionMode === 'REAL_BROKER') {
+    if (state.isFeedStale || !state.lastAngelTickTime) {
+      showToast(`⚠️ Angel One feed offline or stale (>3s). Order on ${sym} blocked to protect capital.`, 'error');
+      return false;
+    }
     const cleanSym = sym.replace('.NS', '').replace('-EQ', '').toUpperCase();
     if (state.excludeDematHoldings && state.dematHoldings.includes(cleanSym)) {
       showToast(`🛡️ Skipped ${cleanSym}: Held in Demat (Protected by Demat Shield)`, 'info');
@@ -4158,6 +4172,7 @@ async function loadAngelStatus() {
     if (!res.ok) return;
     const data = await res.json();
     if (data.authenticated) {
+      state.angelConnected = true;
       localStorage.setItem('stockai_angel_auth', 'true');
       if (badge) {
         badge.innerHTML = `🟢 Connected (${data.client_code || 'Live'})`;
@@ -4167,11 +4182,13 @@ async function loadAngelStatus() {
       fetchAngelDematHoldings();
       fetchAngelRmsFunds();
     } else if (data.configured) {
+      state.angelConnected = false;
       if (badge) {
         badge.innerHTML = '🟡 Configured (Auth Needed)';
         badge.style.color = 'var(--color-neutral)';
       }
     } else {
+      state.angelConnected = false;
       localStorage.removeItem('stockai_angel_auth');
       if (badge) {
         badge.innerHTML = '⚪ Not Connected';
@@ -4270,18 +4287,108 @@ async function addCustomStock() {
 
 // =============================================================================
 // Angel One / Zerodha Kite Style Continuous Live Real-Time Market Engine
-// High-frequency 1.5s tick loop with auto-updating P&L, live flashing & auto SL/TP triggers
+// High-frequency tick loop with Angel One single source of truth & RAF rendering
 // =============================================================================
 let liveMarketInterval = null;
 let lastRealQuoteSyncTime = 0;
+let _isTickRenderScheduled = false;
+
+function scheduleTickRender() {
+  if (_isTickRenderScheduled) return;
+  _isTickRenderScheduled = true;
+  requestAnimationFrame(() => {
+    _isTickRenderScheduled = false;
+    tickOpenPositionsLive();
+    tickTickerRibbonLive();
+  });
+}
+
+function checkMarketFeedStaleness() {
+  const badgePill = document.getElementById('price-source-pill');
+  const badgeDot = document.getElementById('price-source-dot');
+  const badgeText = document.getElementById('price-source-text');
+  const chartTag = document.getElementById('chart-price-source-tag');
+  const submitBtn = document.getElementById('order-submit-btn');
+
+  const now = Date.now();
+  const tickAgeMs = state.lastAngelTickTime ? (now - state.lastAngelTickTime) : 999999;
+  const isStale = tickAgeMs > 3500;
+  const isOffline = !state.lastAngelTickTime || state.priceSource === 'Feed_Offline' || (!state.angelConnected && tickAgeMs > 10000);
+
+  if (isOffline) {
+    if (badgePill) {
+      badgePill.style.background = 'rgba(239, 68, 68, 0.12)';
+      badgePill.style.borderColor = 'rgba(239, 68, 68, 0.35)';
+      badgePill.style.color = '#ef4444';
+    }
+    if (badgeDot) badgeDot.style.background = '#ef4444';
+    if (badgeText) badgeText.textContent = '🔴 Feed Offline';
+    if (chartTag) {
+      chartTag.textContent = '🔴 Feed Offline';
+      chartTag.style.background = 'rgba(239, 68, 68, 0.12)';
+      chartTag.style.color = '#ef4444';
+      chartTag.style.borderColor = 'rgba(239, 68, 68, 0.35)';
+    }
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.title = 'Market feed is offline. Orders are temporarily blocked to protect capital.';
+      submitBtn.style.opacity = '0.6';
+      submitBtn.style.cursor = 'not-allowed';
+    }
+    state.isFeedStale = true;
+  } else if (isStale) {
+    if (badgePill) {
+      badgePill.style.background = 'rgba(245, 158, 11, 0.12)';
+      badgePill.style.borderColor = 'rgba(245, 158, 11, 0.35)';
+      badgePill.style.color = '#f59e0b';
+    }
+    if (badgeDot) badgeDot.style.background = '#f59e0b';
+    if (badgeText) badgeText.textContent = '🟡 Feed Paused';
+    if (chartTag) {
+      chartTag.textContent = '🟡 Feed Paused';
+      chartTag.style.background = 'rgba(245, 158, 11, 0.12)';
+      chartTag.style.color = '#f59e0b';
+      chartTag.style.borderColor = 'rgba(245, 158, 11, 0.35)';
+    }
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.title = 'Live feed is stale (>3s). Orders blocked until fresh tick arrives.';
+      submitBtn.style.opacity = '0.6';
+      submitBtn.style.cursor = 'not-allowed';
+    }
+    state.isFeedStale = true;
+  } else {
+    const timeStr = new Date(state.lastAngelTickTime).toLocaleTimeString('en-IN', { hour12: false });
+    if (badgePill) {
+      badgePill.style.background = 'rgba(16, 185, 129, 0.12)';
+      badgePill.style.borderColor = 'rgba(16, 185, 129, 0.35)';
+      badgePill.style.color = '#10b981';
+    }
+    if (badgeDot) badgeDot.style.background = '#10b981';
+    if (badgeText) badgeText.textContent = `⚡ Angel One Live (${timeStr})`;
+    if (chartTag) {
+      chartTag.textContent = `⚡ Angel One Live (${timeStr})`;
+      chartTag.style.background = 'rgba(16, 185, 129, 0.12)';
+      chartTag.style.color = '#10b981';
+      chartTag.style.borderColor = 'rgba(16, 185, 129, 0.35)';
+    }
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.title = '';
+      submitBtn.style.opacity = '1';
+      submitBtn.style.cursor = 'pointer';
+    }
+    state.isFeedStale = false;
+  }
+}
 
 function startContinuousLiveMarketEngine() {
   if (liveMarketInterval) clearInterval(liveMarketInterval);
 
   liveMarketInterval = setInterval(() => {
     syncRealQuotesPeriodically();
-    tickOpenPositionsLive();
-    tickTickerRibbonLive();
+    scheduleTickRender();
+    checkMarketFeedStaleness();
     updateMarketSessionUI();
     checkEodAutoSquareOff();
   }, 1000);
@@ -4304,23 +4411,11 @@ function tickOpenPositionsLive() {
     const oldCmp = Number(pos.current_price) || Number(pos.entry_price) || 1000;
     let newCmp = oldCmp;
 
-    // 1. Direct Real Quote from Angel One (Instant snap, zero smoothing lag!)
-    if (state.latestLivePrices && state.latestLivePrices[pos.symbol]) {
-      newCmp = Number(state.latestLivePrices[pos.symbol]);
-    } else if (!isMarketClosed) {
-      // Micro-fluctuations standard tick only during LIVE market hours (09:15 - 15:30)
-      const basePrice = Number(pos.anchor_price) || Number(pos.entry_price) || oldCmp;
-      const tickSize = oldCmp > 2000 ? 0.20 : (oldCmp > 500 ? 0.10 : 0.05);
-      if (Math.random() > 0.40) {
-        const drift = oldCmp - basePrice;
-        let dir = Math.random() > 0.49 ? 1 : -1;
-        if (Math.abs(drift) > (basePrice * 0.0035)) {
-          dir = drift > 0 ? -1 : 1;
-        }
-        newCmp = Math.max(1, Math.round((oldCmp + dir * tickSize) * 100) / 100);
-      }
+    // Direct Real Quote from Angel One (Single Source of Truth, zero random drift)
+    const cleanSym = pos.symbol ? pos.symbol.replace('.NS', '').replace('-EQ', '').toUpperCase() : '';
+    if (state.latestLivePrices && (state.latestLivePrices[pos.symbol] || state.latestLivePrices[cleanSym])) {
+      newCmp = Number(state.latestLivePrices[pos.symbol] || state.latestLivePrices[cleanSym]);
     } else {
-      // Market is CLOSED: Strictly freeze price at official closing price!
       newCmp = oldCmp;
     }
 
@@ -4438,26 +4533,16 @@ function tickOpenPositionsLive() {
 function tickTickerRibbonLive() {
   if (!state.watchlist || state.watchlist.length === 0) return;
 
-  const sessionInfo = getMarketSessionInfo();
-  const isMarketClosed = sessionInfo.session === 'OFF_MARKET';
-
   state.watchlist.forEach(s => {
     let newPrice = Number(s.price) || 1000;
     let priceUpdated = false;
 
-    // 1. If Angel One has real quote, use it immediately
-    if (state.latestLivePrices && state.latestLivePrices[s.symbol]) {
-      const realP = Number(state.latestLivePrices[s.symbol]);
+    // Direct Real Quote from Angel One (Single Source of Truth, zero random drift)
+    const cleanSym = s.symbol ? s.symbol.replace('.NS', '').replace('-EQ', '').toUpperCase() : '';
+    if (state.latestLivePrices && (state.latestLivePrices[s.symbol] || state.latestLivePrices[cleanSym])) {
+      const realP = Number(state.latestLivePrices[s.symbol] || state.latestLivePrices[cleanSym]);
       if (realP > 0 && Math.abs(realP - newPrice) > 0.01) {
         newPrice = realP;
-        priceUpdated = true;
-      }
-    } else if (!isMarketClosed) {
-      // Micro-tick only during live market hours
-      if (Math.random() > 0.65) {
-        const tickSize = newPrice > 2000 ? 0.25 : (newPrice > 500 ? 0.10 : 0.05);
-        const dir = Math.random() > 0.49 ? 1 : -1;
-        newPrice = Math.max(1, Math.round((newPrice + dir * tickSize) * 100) / 100);
         priceUpdated = true;
       }
     }
@@ -4474,11 +4559,14 @@ function tickTickerRibbonLive() {
 
   // If viewing currentSymbol on chart, update CMP header
   if (state.currentSymbol) {
+    const cleanCurrent = state.currentSymbol.replace('.NS', '').replace('-EQ', '').toUpperCase();
+    const liveP = state.latestLivePrices && (state.latestLivePrices[state.currentSymbol] || state.latestLivePrices[cleanCurrent]);
     const match = state.watchlist.find(w => w.symbol === state.currentSymbol);
-    if (match) {
-      const cmpHeader = document.getElementById('chart-cmp-display') || document.getElementById('selected-stock-price');
+    const dispP = liveP || (match ? match.price : null);
+    if (dispP) {
+      const cmpHeader = document.getElementById('chart-cmp-display');
       if (cmpHeader) {
-        cmpHeader.textContent = `${match.currency || '₹'}${match.price.toFixed(2)}`;
+        cmpHeader.textContent = `₹${Number(dispP).toFixed(2)}`;
       }
     }
   }
@@ -4486,10 +4574,10 @@ function tickTickerRibbonLive() {
 
 async function syncRealQuotesPeriodically() {
   const now = Date.now();
-  if (now - lastRealQuoteSyncTime < 1000) return;
+  if (now - lastRealQuoteSyncTime < 950) return;
   lastRealQuoteSyncTime = now;
 
-  // 1. High-Speed Batch Quotes routed securely via Backend (Zero browser credentials)
+  // High-Speed Batch Quotes routed securely via Backend (Angel One SmartAPI)
   try {
     const openSyms = state.portfolio && state.portfolio.open_positions ? state.portfolio.open_positions.map(p => p.symbol) : [];
     const symbolsToQuote = [...new Set([...openSyms, ...state.watchlist.map(w => w.symbol).slice(0, 25), state.currentSymbol])].filter(Boolean).join(',');
@@ -4498,13 +4586,19 @@ async function syncRealQuotesPeriodically() {
       const qData = await quoteRes.json();
       if (qData.success && qData.quotes) {
         if (!state.latestLivePrices) state.latestLivePrices = {};
+        state.lastAngelTickTime = Date.now();
+        state.priceSource = qData.source || 'AngelOne_Live';
+        state.angelConnected = (qData.source === 'AngelOne_Live');
+
         Object.entries(qData.quotes).forEach(([sym, item]) => {
           const ltp = Number(item.price);
           if (sym && ltp > 0) {
+            const clean = sym.replace('.NS', '').replace('-EQ', '').toUpperCase();
             state.latestLivePrices[sym] = ltp;
+            state.latestLivePrices[clean] = ltp;
 
             // 1. Watchlist in-memory update
-            const wItem = state.watchlist.find(w => w.symbol === sym);
+            const wItem = state.watchlist.find(w => w.symbol === sym || w.symbol.replace('.NS', '') === clean);
             if (wItem) {
               wItem.price = ltp;
               const close = Number(item.close) || ltp;
@@ -4521,46 +4615,35 @@ async function syncRealQuotesPeriodically() {
             }
 
             // 3. Chart Header CMP if currently viewing this stock
-            if (state.currentSymbol === sym) {
-              const cmpHeader = document.getElementById('chart-cmp-display') || document.getElementById('selected-stock-price');
+            if (state.currentSymbol === sym || state.currentSymbol.replace('.NS', '') === clean) {
+              const cmpHeader = document.getElementById('chart-cmp-display');
               if (cmpHeader) cmpHeader.textContent = `₹${ltp.toFixed(2)}`;
             }
 
             // 4. Trade Ticket Price Input if currently selected
             const selEl = document.getElementById('order-symbol-select');
-            if (selEl && selEl.value === sym) {
+            if (selEl && (selEl.value === sym || selEl.value.replace('.NS', '') === clean)) {
               const pInput = document.getElementById('order-price-input');
-              if (pInput) pInput.value = ltp.toFixed(2);
+              if (pInput && (!pInput.value || pInput.dataset.manual !== 'true')) {
+                pInput.value = ltp.toFixed(2);
+              }
             }
 
             // 5. Open Positions CMP
             if (state.portfolio && state.portfolio.open_positions) {
-              const pos = state.portfolio.open_positions.find(p => p.symbol === sym);
+              const pos = state.portfolio.open_positions.find(p => p.symbol === sym || p.symbol.replace('.NS', '') === clean);
               if (pos) pos.current_price = ltp;
             }
           }
         });
 
-        // Trigger immediate live portfolio tick & equity calculation
-        tickOpenPositionsLive();
+        scheduleTickRender();
+        checkMarketFeedStaleness();
         return;
       }
     }
   } catch (e) {
-    // If backend batch quotes temporarily unavailable, continue with Yahoo fallback below
-  }
-
-  // 2. Fallback: Yahoo Finance direct (only if backend is offline)
-  const openSyms = state.portfolio && state.portfolio.open_positions ? state.portfolio.open_positions.map(p => p.symbol) : [];
-  const symbolsToSync = [...new Set([...openSyms, 'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', state.currentSymbol])].filter(Boolean);
-  for (const sym of symbolsToSync.slice(0, 3)) {
-    try {
-      const quote = await fetchDirectYahooNSE(sym);
-      if (quote && quote.price > 0) {
-        if (!state.latestLivePrices) state.latestLivePrices = {};
-        state.latestLivePrices[sym] = quote.price;
-      }
-    } catch (e) {}
+    // Network or server error
   }
 }
 
@@ -4583,7 +4666,11 @@ function initWebSocket() {
           if (msg.data && msg.data.prices) {
             if (!state.latestLivePrices) state.latestLivePrices = {};
             Object.assign(state.latestLivePrices, msg.data.prices);
-            tickOpenPositionsLive();
+            state.lastAngelTickTime = Date.now();
+            state.priceSource = msg.data.source || 'AngelOne_Live';
+            state.angelConnected = (state.priceSource === 'AngelOne_Live');
+            scheduleTickRender();
+            checkMarketFeedStaleness();
           }
         } else if (msg.type === 'SL_TP_TRIGGER') {
           msg.data.forEach(trig => {

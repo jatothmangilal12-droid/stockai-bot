@@ -77,6 +77,8 @@ CURRENT_WATCHLIST = list(DEFAULT_STOCKS)
 CACHE_ANALYSIS = {}
 
 LATEST_PRICES = {}
+LATEST_PRICES_METADATA = {}
+LAST_ANGEL_TICK_TIME = 0.0
 
 # Active WebSocket Connections
 active_connections: list[WebSocket] = []
@@ -163,25 +165,37 @@ def fetch_live_nse_quote(symbol: str) -> dict:
             except Exception as e:
                 print(f"[SmartAPI] Live quote fetch error for {symbol}: {e}")
 
-    # 2. Yahoo Chart Quote Fallback
-    clean_sym = symbol if symbol.endswith(".NS") or symbol.startswith("^") else f"{symbol}.NS"
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{clean_sym}?interval=15m&range=2d"
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-    try:
-        with urllib.request.urlopen(req, timeout=3.5) as resp:
-            data = json.loads(resp.read().decode())
-            meta = data["chart"]["result"][0]["meta"]
-            cmp = meta.get("regularMarketPrice") or meta.get("chartPreviousClose") or 0.0
-            prev_close = meta.get("chartPreviousClose") or meta.get("previousClose") or cmp
-            change_pct = round(((cmp - prev_close) / prev_close) * 100, 2) if prev_close else 0.0
-            return {
-                "price": round(cmp, 2),
-                "change_pct": change_pct,
-                "currency": "₹",
-                "source": "NSE_Direct"
-            }
-    except Exception as e:
-        pass
+    # 2. Yahoo Chart Quote Fallback (STRICTLY for Indices like ^INDIAVIX or ^NSEI only)
+    if symbol.startswith("^"):
+        clean_sym = symbol
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{clean_sym}?interval=15m&range=2d"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        try:
+            with urllib.request.urlopen(req, timeout=3.5) as resp:
+                data = json.loads(resp.read().decode())
+                meta = data["chart"]["result"][0]["meta"]
+                cmp = meta.get("regularMarketPrice") or meta.get("chartPreviousClose") or 0.0
+                prev_close = meta.get("chartPreviousClose") or meta.get("previousClose") or cmp
+                change_pct = round(((cmp - prev_close) / prev_close) * 100, 2) if prev_close else 0.0
+                return {
+                    "price": round(cmp, 2),
+                    "change_pct": change_pct,
+                    "currency": "₹",
+                    "source": "Yahoo_Index"
+                }
+        except Exception:
+            pass
+
+    # 3. For equity stocks, NEVER fallback to 15-min delayed Yahoo! Use Angel One cached price or report Feed_Offline
+    clean = symbol.replace(".NS", "").replace("-EQ", "").upper()
+    cached = LATEST_PRICES.get(clean) or LATEST_PRICES.get(f"{clean}.NS") or 0.0
+    meta = LATEST_PRICES_METADATA.get(clean, {})
+    return {
+        "price": cached,
+        "change_pct": meta.get("change_pct", 0.0),
+        "currency": "₹",
+        "source": "AngelOne_Live" if cached > 0 else "Feed_Offline"
+    }
 
     return {"price": 0.0, "change_pct": 0.0, "currency": "₹", "source": "None"}
 
@@ -1131,11 +1145,34 @@ def calculate_broker_margin(symbol: str, price: Optional[float] = 0.0):
 @app.get("/api/broker/batch-quotes")
 def get_broker_batch_quotes(symbols: Optional[str] = ""):
     """Fetch high-speed live quotes from Angel One for comma-separated symbols."""
+    global LAST_ANGEL_TICK_TIME
     sym_list = [s.strip() for s in symbols.split(",") if s.strip()] if symbols else [s["symbol"] for s in CURRENT_WATCHLIST[:20]]
     quotes = angel_client.get_batch_quotes(sym_list)
+    now_ts = time.time()
+    for sym, q in quotes.items():
+        if q.get("price", 0) > 0:
+            p = round(float(q["price"]), 2)
+            pct = float(q.get("percent_change", q.get("change_pct", 0.0)))
+            close = float(q.get("close", p))
+            clean = sym.replace(".NS", "").replace("-EQ", "").upper()
+            LATEST_PRICES[clean] = p
+            LATEST_PRICES[f"{clean}.NS"] = p
+            LATEST_PRICES[sym] = p
+            LATEST_PRICES_METADATA[clean] = {
+                "price": p,
+                "change_pct": pct,
+                "close": close,
+                "timestamp": now_ts,
+                "source": "AngelOne_Live"
+            }
+            LAST_ANGEL_TICK_TIME = now_ts
+
+    is_live = (angel_client.is_configured() and angel_client.is_authenticated and (now_ts - LAST_ANGEL_TICK_TIME < 5.0) and len(quotes) > 0)
     return {
         "success": True,
         "count": len(quotes),
+        "source": "AngelOne_Live" if is_live else "Feed_Offline",
+        "timestamp": now_ts,
         "quotes": json_sanitize(quotes)
     }
 
@@ -1197,10 +1234,11 @@ async def broadcast_ws(payload: dict):
 
 
 async def fast_price_tick_broadcaster():
-    """Live ticker stream with batch quotes and simulated intraday micro-ticks (every 1.5 - 2s)."""
+    """Live ticker stream with 100% Angel One SmartAPI batch quotes (every 1.0s, zero simulated drift)."""
+    global LAST_ANGEL_TICK_TIME
     while True:
         try:
-            await asyncio.sleep(1.8)
+            await asyncio.sleep(1.0)
             # 1. Update prices for all active open positions
             def get_open_rows():
                 conn = get_connection()
@@ -1212,10 +1250,10 @@ async def fast_price_tick_broadcaster():
 
             open_rows = await asyncio.to_thread(get_open_rows)
             open_symbols = {r["symbol"] for r in open_rows}
-            watchlist_symbols = {item["symbol"] for item in CURRENT_WATCHLIST[:15]}
+            watchlist_symbols = {item["symbol"] for item in CURRENT_WATCHLIST[:20]}
             all_target_symbols = list(open_symbols.union(watchlist_symbols))
 
-            # Fetch batch quotes from Angel One SmartAPI for all open positions & calls
+            # Fetch batch quotes from Angel One SmartAPI for all open positions & watchlist
             if angel_client.is_configured():
                 if not angel_client.is_authenticated:
                     try:
@@ -1225,30 +1263,27 @@ async def fast_price_tick_broadcaster():
                 if angel_client.is_authenticated:
                     try:
                         batch_quotes = await asyncio.to_thread(angel_client.get_batch_quotes, all_target_symbols)
+                        now_ts = time.time()
                         for sym, q in batch_quotes.items():
                             if q.get("price", 0) > 0:
                                 p = round(float(q["price"]), 2)
+                                pct = float(q.get("percent_change", q.get("change_pct", 0.0)))
+                                close = float(q.get("close", p))
                                 clean = sym.replace(".NS", "").replace("-EQ", "").upper()
                                 LATEST_PRICES[clean] = p
                                 LATEST_PRICES[f"{clean}.NS"] = p
                                 LATEST_PRICES[sym] = p
+                                LATEST_PRICES_METADATA[clean] = {
+                                    "price": p,
+                                    "change_pct": pct,
+                                    "close": close,
+                                    "timestamp": now_ts,
+                                    "source": "AngelOne_Live"
+                                }
+                        if batch_quotes:
+                            LAST_ANGEL_TICK_TIME = now_ts
                     except Exception as ex:
                         print(f"[Broadcaster] Angel One quote update error: {ex}")
-
-            # For simulated positions ONLY if Angel One is NOT configured/offline
-            if not (angel_client.is_configured() and angel_client.is_authenticated):
-                for r in open_rows:
-                    sym = r["symbol"]
-                    base_p = float(r["entry_price"]) if r["entry_price"] else float(r["current_price"])
-                    old_p = LATEST_PRICES.get(sym, base_p)
-                    corridor = base_p * 0.025
-                    tick_step = 0.25 if base_p > 2000 else (0.10 if base_p > 500 else 0.05)
-                    diff = old_p - base_p
-                    drift = -0.3 if diff > corridor else (0.3 if diff < -corridor else 0.0)
-                    dir_tick = 1 if random.random() < (0.50 + drift) else -1
-                    new_p = round(old_p + dir_tick * tick_step * random.choice([1, 2, 3]), 2)
-                    new_p = max(round(base_p - corridor, 2), min(round(base_p + corridor, 2), new_p))
-                    LATEST_PRICES[sym] = new_p
 
             # 2. Update Angel One Research Calls with live prices & auto SL/TP triggers
             await asyncio.to_thread(angel_research.update_live_prices, LATEST_PRICES)
@@ -1270,15 +1305,21 @@ async def fast_price_tick_broadcaster():
 
             # 4. Broadcast price ticks to all active connections
             if active_connections:
+                now_ts = time.time()
+                is_live = (angel_client.is_configured() and angel_client.is_authenticated and (now_ts - LAST_ANGEL_TICK_TIME < 5.0))
+                source_label = "AngelOne_Live" if is_live else "Feed_Offline"
                 await broadcast_ws({
                     "type": "PRICE_TICK",
                     "data": {
                         "prices": LATEST_PRICES,
-                        "timestamp": time.time()
+                        "metadata": LATEST_PRICES_METADATA,
+                        "source": source_label,
+                        "timestamp": now_ts,
+                        "last_angel_tick": LAST_ANGEL_TICK_TIME
                     }
                 })
         except Exception as e:
-            await asyncio.sleep(2)
+            await asyncio.sleep(1.0)
 
 
 async def background_market_scanner():
