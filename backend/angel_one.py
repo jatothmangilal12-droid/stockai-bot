@@ -611,132 +611,30 @@ class AngelOneClient:
         price: float = 0.0,
         stop_loss: Optional[float] = None,
         target_price: Optional[float] = None,
+        sl_pct: Optional[float] = None,
+        tp_pct: Optional[float] = None,
         order_type: str = "MARKET"
     ) -> dict:
         """
-        Execute Live Real-Money Order on Angel One SmartAPI.
-        
-        IRONCLAD DEMAT HOLDING PROTECTION GUARANTEE:
-        - Product type is strictly HARDCODED to 'INTRADAY' (MIS).
-        - Under NO circumstance does this method place 'DELIVERY' or 'CNC' orders.
-        - Existing Demat long-term delivery shares are 100% ring-fenced and untouched!
+        Execute Institutional 3-Stage Order on Angel One SmartAPI:
+          Stage 1: Submit Entry (MARKET / LIMIT)
+          Stage 2: Fill Confirmation & Retrieve Actual Fill Price
+          Stage 3: Place Dual OCO (Hard Stop-Loss + Target) with 0.05 tick size & buffer
         """
-        if not self.is_authenticated:
-            ok, msg = self.login()
-            if not ok:
-                return {"status": False, "message": f"Angel One authentication required: {msg}"}
+        from backend.broker_oco import angel_oco_manager
+        return angel_oco_manager.execute_three_stage_order(
+            angel_client=self,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=price,
+            stop_loss=stop_loss,
+            target_price=target_price,
+            sl_pct=sl_pct,
+            tp_pct=tp_pct,
+            order_type=order_type
+        )
 
-        clean_sym = symbol.replace(".NS", "").replace("-EQ", "").upper()
-        symbol_key = f"{clean_sym}.NS"
-        token = NSE_TOKENS.get(symbol_key)
-        if not token:
-            return {"status": False, "message": f"Token not found for {symbol}. Add token mapping in NSE_TOKENS."}
-
-        tradingsymbol = f"{clean_sym}-EQ"
-        transaction_type = "BUY" if side.upper() == "BUY" else "SELL"
-
-        # Hardcoded INTRADAY ensures complete segregation from Demat CNC holdings
-        product_type = "INTRADAY"
-
-        headers = self._get_headers()
-
-        payload = {
-            "variety": "NORMAL",
-            "tradingsymbol": tradingsymbol,
-            "symboltoken": token,
-            "transactiontype": transaction_type,
-            "exchange": "NSE",
-            "ordertype": order_type,
-            "producttype": product_type,
-            "duration": "DAY",
-            "price": str(price) if order_type == "LIMIT" else "0",
-            "squareoff": "0",
-            "stoploss": "0",
-            "quantity": str(quantity)
-        }
-
-        try:
-            req = urllib.request.Request(
-                ORDER_PLACE_ENDPOINT,
-                data=json.dumps(payload).encode("utf-8"),
-                headers=headers,
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=8) as response:
-                res = json.loads(response.read().decode("utf-8"))
-                if res.get("status") or res.get("success"):
-                    order_data = res.get("data")
-                    order_id = order_data.get("orderid") if isinstance(order_data, dict) else (order_data or "CONFIRMED")
-                    
-                    # Mandatory Exchange-Level Stop-Loss Order Placement
-                    sl_order_id = None
-                    sl_status = False
-                    sl_msg = ""
-                    if stop_loss and float(stop_loss) > 0:
-                        sl_side = "SELL" if transaction_type == "BUY" else "BUY"
-                        sl_trig = round(float(stop_loss), 2)
-                        # Stop-loss limit price with 1% buffer
-                        sl_limit = round(sl_trig * (0.985 if sl_side == "SELL" else 1.015), 2)
-                        sl_payload = {
-                            "variety": "STOPLOSS",
-                            "tradingsymbol": tradingsymbol,
-                            "symboltoken": token,
-                            "transactiontype": sl_side,
-                            "exchange": "NSE",
-                            "ordertype": "STOPLOSS_LIMIT",
-                            "producttype": product_type,
-                            "duration": "DAY",
-                            "price": str(sl_limit),
-                            "triggerprice": str(sl_trig),
-                            "quantity": str(quantity)
-                        }
-                        try:
-                            sl_req = urllib.request.Request(
-                                ORDER_PLACE_ENDPOINT,
-                                data=json.dumps(sl_payload).encode("utf-8"),
-                                headers=headers,
-                                method="POST"
-                            )
-                            with urllib.request.urlopen(sl_req, timeout=6) as sl_resp:
-                                sl_res = json.loads(sl_resp.read().decode("utf-8"))
-                                if sl_res.get("status") or sl_res.get("success"):
-                                    sl_data = sl_res.get("data")
-                                    sl_order_id = sl_data.get("orderid") if isinstance(sl_data, dict) else (sl_data or "SL_CONFIRMED")
-                                    sl_status = True
-                                    sl_msg = f"SL Armed @ ₹{sl_trig} (Order ID: {sl_order_id})"
-                                else:
-                                    sl_msg = f"Broker SL rejected: {sl_res.get('message', 'Failed')} - software SL active"
-                        except Exception as sl_err:
-                            sl_msg = f"SL network notice: {sl_err} - software SL active"
-
-                    return {
-                        "status": True,
-                        "order_id": order_id,
-                        "sl_order_id": sl_order_id,
-                        "sl_placed": sl_status,
-                        "sl_info": sl_msg,
-                        "stop_loss": stop_loss,
-                        "target_price": target_price,
-                        "message": f"Angel One {transaction_type} order placed! ID: {order_id} (Product: INTRADAY). {sl_msg}",
-                        "demat_protected": True
-                    }
-                else:
-                    err_msg = res.get("message") or "Order rejected by broker"
-                    err_code = res.get("errorcode") or res.get("errorCode", "")
-                    return {
-                        "status": False,
-                        "message": f"Angel One Rejected: {err_msg} ({err_code})",
-                        "error_code": err_code
-                    }
-        except urllib.error.HTTPError as e:
-            try:
-                err_body = json.loads(e.read().decode("utf-8"))
-                msg = err_body.get("message") or str(e)
-            except Exception:
-                msg = f"HTTP Error {e.code}: {e.reason}"
-            return {"status": False, "message": f"Broker Error: {msg}"}
-        except Exception as e:
-            return {"status": False, "message": f"Network Error: {e}"}
 
     def cancel_order(self, order_id: str, variety: str = "NORMAL") -> dict:
         """Cancel an open order on Angel One SmartAPI."""

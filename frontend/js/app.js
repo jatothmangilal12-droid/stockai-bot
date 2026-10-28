@@ -2388,6 +2388,9 @@ async function executeAngelLiveOrder(symbol, side, qty, price, sl, tp) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
+    const slPct = (sl && price > 0) ? Math.round(Math.abs(price - sl) / price * 10000) / 10000 : 0.007;
+    const tpPct = (tp && price > 0) ? Math.round(Math.abs(tp - price) / price * 10000) / 10000 : 0.012;
+
     const res = await fetch(`${API_BASE}/api/broker/order`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2397,7 +2400,9 @@ async function executeAngelLiveOrder(symbol, side, qty, price, sl, tp) {
         quantity: qty,
         price: price,
         stop_loss: sl,
-        target_price: tp
+        target_price: tp,
+        sl_pct: slPct,
+        tp_pct: tpPct
       }),
       signal: controller.signal
     });
@@ -2406,16 +2411,24 @@ async function executeAngelLiveOrder(symbol, side, qty, price, sl, tp) {
     if (res.ok) {
       const data = await res.json();
       if (data.status || data.success) {
-        if (data.sl_placed) {
-          showToast(`⚡ Angel One Order Placed! ID: ${data.order_id} | Hard Stop-Loss Armed (SL ID: ${data.sl_order_id})`, 'success');
+        if (data.oco_state === 'OCO_ARMED' || (data.sl_placed && data.target_order_id)) {
+          showToast(`⚡ Angel One 3-Stage Order Armed! Filled @ ₹${data.fill_price || price} | Hard SL @ ₹${data.sl_trigger} (ID: ${data.sl_order_id}) | Target @ ₹${data.target_price} (ID: ${data.target_order_id}) [OCO Active]`, 'success');
+        } else if (data.sl_placed) {
+          showToast(`⚡ Angel One Order Placed! ID: ${data.order_id || data.entry_order_id} | Hard Stop-Loss Armed (SL ID: ${data.sl_order_id})`, 'success');
         } else {
-          showToast(`⚡ Angel One Order Placed! ID: ${data.order_id} | Trailing Software SL Active (${data.sl_info || 'Exchange SL skipped'})`, 'info');
+          showToast(`⚡ Angel One Order Placed! ID: ${data.order_id || data.entry_order_id} (Demat Protected)`, 'info');
         }
         return { 
           success: true, 
-          order_id: data.order_id,
+          order_id: data.order_id || data.entry_order_id,
+          entry_order_id: data.entry_order_id,
           sl_order_id: data.sl_order_id,
           sl_placed: data.sl_placed,
+          target_order_id: data.target_order_id,
+          fill_price: data.fill_price,
+          sl_trigger: data.sl_trigger,
+          target_price: data.target_price,
+          oco_state: data.oco_state,
           sl_info: data.sl_info,
           message: data.message
         };
@@ -4576,6 +4589,10 @@ function initWebSocket() {
           msg.data.forEach(trig => {
             showToast(`🔔 ${trig.type}: ${trig.symbol} hit! Result: ${trig.result} (₹${trig.pnl})`, trig.result === 'WIN' ? 'success' : 'error');
           });
+          loadPortfolio();
+        } else if (msg.type === 'BROKER_OCO_UPDATE') {
+          showToast(msg.message, msg.event === 'TARGET_HIT' ? 'success' : 'info');
+          fetchAngelRmsFunds();
           loadPortfolio();
         } else if (msg.type === 'AI_AUTO_TRADE_EXECUTED') {
           msg.data.forEach(trade => {

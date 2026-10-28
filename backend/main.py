@@ -89,6 +89,8 @@ class OrderRequest(BaseModel):
     price: float
     stop_loss: Optional[float] = None
     target_price: Optional[float] = None
+    sl_pct: Optional[float] = None
+    tp_pct: Optional[float] = None
     company_name: Optional[str] = ""
     trade_type: Optional[str] = "MANUAL"
     ai_confidence: Optional[float] = 0.0
@@ -1025,7 +1027,11 @@ def get_broker_positions():
 
 @app.post("/api/broker/square-off-all")
 def square_off_all_broker_positions():
-    """Square off all open INTRADAY positions on Angel One."""
+    """Square off all open INTRADAY positions on Angel One and cancel active OCO orders."""
+    from backend.broker_oco import angel_oco_manager
+    active = angel_oco_manager._get_active_oco_records()
+    for rec in active:
+        angel_oco_manager.cancel_oco_for_symbol(angel_client, rec["symbol"])
     return angel_client.square_off_all()
 
 
@@ -1039,8 +1045,10 @@ def get_broker_tokens():
 @app.post("/api/broker/order")
 def execute_broker_order(order: OrderRequest):
     """
-    Execute Real-Money Order on Angel One with GUARANTEED DEMAT PROTECTION.
-    Strictly uses producttype='INTRADAY' (MIS).
+    Execute Real-Money 3-Stage Order on Angel One with GUARANTEED DEMAT PROTECTION & DUAL OCO.
+    Stage 1: Submit Entry (MIS 5x)
+    Stage 2: Fill Confirmation & Retrieve Actual Fill Price
+    Stage 3: Place Dual OCO Stop-Loss & Target orders
     """
     return angel_client.place_order(
         symbol=order.symbol,
@@ -1048,8 +1056,45 @@ def execute_broker_order(order: OrderRequest):
         quantity=order.quantity,
         price=order.price,
         stop_loss=order.stop_loss,
-        target_price=order.target_price
+        target_price=order.target_price,
+        sl_pct=order.sl_pct,
+        tp_pct=order.tp_pct
     )
+
+
+@app.get("/api/broker/oco-orders")
+def get_broker_oco_orders():
+    """Retrieve all active OCO orders and their state machine status."""
+    from backend.broker_oco import angel_oco_manager
+    records = angel_oco_manager._get_active_oco_records()
+    return {"status": True, "count": len(records), "orders": json_sanitize(records)}
+
+
+@app.post("/api/broker/close/{symbol}")
+def close_broker_symbol(symbol: str):
+    """Square off specific symbol on Angel One and cancel its active OCO orders."""
+    from backend.broker_oco import angel_oco_manager
+    angel_oco_manager.cancel_oco_for_symbol(angel_client, symbol)
+    pos_res = angel_client.get_positions()
+    if pos_res.get("status"):
+        positions = pos_res.get("positions", [])
+        clean = symbol.replace(".NS", "").replace("-EQ", "").upper()
+        for p in positions:
+            tsym = (p.get("tradingsymbol") or "").replace("-EQ", "").upper()
+            if tsym == clean:
+                net_qty = int(p.get("netqty", 0))
+                if net_qty != 0:
+                    exit_side = "SELL" if net_qty > 0 else "BUY"
+                    return angel_client.place_order(
+                        symbol=f"{clean}.NS",
+                        side=exit_side,
+                        quantity=abs(net_qty),
+                        price=0.0,
+                        order_type="MARKET"
+                    )
+    return {"status": True, "message": f"Active OCO orders cancelled for {symbol}"}
+
+
 
 
 @app.get("/api/broker/orders")
@@ -1207,6 +1252,16 @@ async def fast_price_tick_broadcaster():
 
             # 2. Update Angel One Research Calls with live prices & auto SL/TP triggers
             await asyncio.to_thread(angel_research.update_live_prices, LATEST_PRICES)
+
+            # 2B. Reconcile Live Angel One 3-Stage OCO Orders (Target Hit / SL Hit / OCO Cancellation)
+            if angel_client.is_configured() and angel_client.is_authenticated:
+                try:
+                    from backend.broker_oco import angel_oco_manager
+                    oco_events = await asyncio.to_thread(angel_oco_manager.reconcile_active_oco_orders, angel_client)
+                    for ev in oco_events:
+                        await broadcast_ws(ev)
+                except Exception as oco_ex:
+                    print(f"[Broadcaster] OCO reconciliation error: {oco_ex}")
 
             # 3. Check SL/TP triggers in background thread
             triggered = await asyncio.to_thread(paper_trading.check_sl_tp_triggers, LATEST_PRICES)

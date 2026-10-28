@@ -112,7 +112,34 @@ def init_db():
     )
     """)
 
-    # Check for missing columns in existing positions table (Auto Migration)
+    # Angel One Real-Money OCO (One-Cancels-Other) 3-Stage State Machine Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS angel_oco_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_order_tag TEXT UNIQUE,
+        symbol TEXT NOT NULL,
+        tradingsymbol TEXT NOT NULL,
+        symboltoken TEXT NOT NULL,
+        side TEXT NOT NULL,                -- 'BUY' or 'SELL'
+        quantity INTEGER NOT NULL,
+        entry_order_id TEXT,
+        entry_status TEXT,                -- 'SUBMITTED', 'COMPLETE', 'REJECTED', 'CANCELLED'
+        fill_price REAL DEFAULT 0.0,
+        fill_quantity INTEGER DEFAULT 0,
+        sl_order_id TEXT,
+        sl_trigger REAL DEFAULT 0.0,
+        sl_limit REAL DEFAULT 0.0,
+        sl_status TEXT,                   -- 'ARMED', 'COMPLETE', 'CANCELLED', 'REJECTED'
+        target_order_id TEXT,
+        target_price REAL DEFAULT 0.0,
+        target_status TEXT,               -- 'ARMED', 'COMPLETE', 'CANCELLED', 'REJECTED'
+        oco_state TEXT DEFAULT 'PENDING', -- 'PENDING', 'ENTRY_PLACED', 'OCO_ARMED', 'TARGET_HIT', 'SL_HIT', 'MANUAL_EXIT', 'EMERGENCY_EXIT', 'EOD_CANCELLED', 'FAILED'
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     cursor.execute("PRAGMA table_info(positions)")
     existing_cols = [c[1] for c in cursor.fetchall()]
     if "trade_type" not in existing_cols:
