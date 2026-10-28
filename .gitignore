@@ -37,3 +37,5 @@ build/
 .idea/
 .DS_Store
 Thumbs.db
+rendered_dom.html
+scratch/

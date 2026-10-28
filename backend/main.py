@@ -45,6 +45,7 @@ from backend.technical_engine import TechnicalEngine
 from backend.signal_evaluator import SignalEvaluator
 from backend.paper_trading import PaperTradingEngine
 from backend.angel_one import AngelOneClient
+from backend.angel_research import AngelResearchEngine, CAPITAL_PER_TRADE
 from backend.database import get_connection
 
 app = FastAPI(title="StockAI - Indian Market 15m Pattern & Sentiment Bot", version="2.0.0")
@@ -63,7 +64,13 @@ news_analyzer = NewsSentimentAnalyzer()
 technical_engine = TechnicalEngine()
 signal_evaluator = SignalEvaluator()
 paper_trading = PaperTradingEngine()
-angel_client = AngelOneClient()
+angel_research = AngelResearchEngine(paper_trading=paper_trading)
+angel_client = AngelOneClient(
+    api_key=os.getenv("ANGELONE_API_KEY", "KLcQJzrD"),
+    client_code=os.getenv("ANGELONE_CLIENT_CODE", "M207216"),
+    password=os.getenv("ANGELONE_PASSWORD", "1995"),
+    totp_secret=os.getenv("ANGELONE_TOTP_SECRET", "JXDOER6HYCVKM2HYRLRASLAFUM")
+)
 
 # Active Watchlist - 100% Indian NSE Stocks
 CURRENT_WATCHLIST = list(DEFAULT_STOCKS)
@@ -105,6 +112,21 @@ class WatchlistAddRequest(BaseModel):
     name: Optional[str] = ""
     market: Optional[str] = "NSE"
     currency: Optional[str] = "₹"
+
+
+class AngelResearchIngestRequest(BaseModel):
+    symbol: str
+    action: Optional[str] = "BUY"
+    entry_price: float
+    stop_loss: float
+    target_price: float
+    category: Optional[str] = "Intraday"
+    company_name: Optional[str] = ""
+    call_type: Optional[str] = "Analyst call"
+
+
+class AngelTextParseRequest(BaseModel):
+    text: str
 
 
 def is_indian_market_open() -> bool:
@@ -520,6 +542,72 @@ def get_reversal_sniper_setups():
 
 
 # =============================================================================
+# Angel One Research Recommendations & Instant ₹10,000 Auto-Paper-Trade Endpoints
+# =============================================================================
+@app.get("/api/angel-research/calls")
+def get_angel_research_calls(category: Optional[str] = "ALL"):
+    """Fetch live Angel One research calls (Intraday, Short Term, Long Term) with live status."""
+    calls = angel_research.get_all_calls(category)
+    return {
+        "success": True,
+        "count": len(calls),
+        "calls": json_sanitize(calls),
+        "capital_per_trade": CAPITAL_PER_TRADE,
+        "auto_trade_enabled": angel_research.auto_trade_enabled
+    }
+
+
+@app.post("/api/angel-research/ingest")
+def ingest_angel_research_call(req: AngelResearchIngestRequest):
+    """
+    Ingest recommendation directly from Angel One (Notification/Web).
+    Instantly executes autonomous paper trade allocating strictly ₹10,000.
+    """
+    res = angel_research.ingest_call(
+        symbol=req.symbol,
+        action=req.action or "BUY",
+        entry_price=req.entry_price,
+        stop_loss=req.stop_loss,
+        target_price=req.target_price,
+        category=req.category or "Intraday",
+        company_name=req.company_name or "",
+        call_type=req.call_type or "Analyst call"
+    )
+    return json_sanitize(res)
+
+
+@app.post("/api/angel-research/parse-text")
+def parse_and_trade_notification(req: AngelTextParseRequest):
+    """Parse raw Angel One push notification and auto-execute ₹10,000 paper trade."""
+    parsed = angel_research.parse_notification_text(req.text)
+    if not parsed:
+        return {"success": False, "message": "Could not parse Symbol, Entry, SL, or Target from text"}
+    res = angel_research.ingest_call(**parsed)
+    return json_sanitize({"success": True, "parsed": parsed, "result": res})
+
+
+@app.post("/api/angel-research/test-call")
+def trigger_test_call():
+    """Trigger a live sample Angel One analyst call to test instant ₹10k auto-paper-trade."""
+    res = angel_research.trigger_sample_call()
+    return json_sanitize(res)
+
+
+@app.get("/api/angel-research/portfolio")
+def get_angel_research_portfolio():
+    """Get portfolio metrics, open paper trades (each ₹10k), and closed trades."""
+    port = paper_trading.get_portfolio(LATEST_PRICES)
+    return json_sanitize(port)
+
+
+@app.post("/api/angel-research/toggle-auto")
+def toggle_angel_auto_trade(enabled: bool = True):
+    """Toggle auto-trade for incoming Angel One recommendations."""
+    angel_research.auto_trade_enabled = enabled
+    return {"success": True, "auto_trade_enabled": enabled}
+
+
+# =============================================================================
 # Paper Trading & Autonomous AI Auto-Trader Endpoints
 # =============================================================================
 @app.get("/api/paper/portfolio")
@@ -905,6 +993,12 @@ def get_broker_order_book():
     return angel_client.get_order_book()
 
 
+@app.delete("/api/broker/order/{order_id}")
+def cancel_broker_order(order_id: str):
+    """Cancel an active open order on Angel One."""
+    return angel_client.cancel_order(order_id)
+
+
 @app.get("/api/broker/depth/{symbol}")
 def get_broker_depth(symbol: str):
     """
@@ -1030,12 +1124,15 @@ async def fast_price_tick_broadcaster():
                 new_p = max(round(base_p - corridor, 2), min(round(base_p + corridor, 2), new_p))
                 LATEST_PRICES[sym] = new_p
 
-            # 2. Check SL/TP triggers in background thread
+            # 2. Update Angel One Research Calls with live prices & auto SL/TP triggers
+            await asyncio.to_thread(angel_research.update_live_prices, LATEST_PRICES)
+
+            # 3. Check SL/TP triggers in background thread
             triggered = await asyncio.to_thread(paper_trading.check_sl_tp_triggers, LATEST_PRICES)
             if triggered:
                 await broadcast_ws({"type": "SL_TP_TRIGGER", "data": triggered})
 
-            # 3. Broadcast price ticks to all active connections
+            # 4. Broadcast price ticks to all active connections
             if active_connections:
                 await broadcast_ws({
                     "type": "PRICE_TICK",
@@ -1161,6 +1258,14 @@ async def startup_event():
         conn.close()
     except Exception:
         pass
+
+    # Auto-login to Angel One on startup
+    if angel_client.is_configured() and not angel_client.is_authenticated:
+        try:
+            ok, msg = angel_client.login()
+            print(f"[Startup] Angel One Auto-Login: {ok} ({msg})")
+        except Exception as ex:
+            print(f"[Startup] Angel One login error: {ex}")
 
     asyncio.create_task(fast_price_tick_broadcaster())
     asyncio.create_task(background_market_scanner())

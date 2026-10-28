@@ -2,844 +2,567 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>StockAI - 15m Pattern & News Sentiment Trading Bot</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Angel One Auto-Trader AI | Research Recommendations</title>
   
   <!-- PWA & Mobile Capabilities -->
   <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#080b11">
+  <meta name="theme-color" content="#060911">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%2310b981'/%3E%3Cpath d='M25 65 L45 45 L60 55 L75 30' stroke='white' stroke-width='8' fill='none'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%2300f59b'/%3E%3Ctext x='50%' y='65%' font-size='50' font-weight='bold' fill='%23022c22' text-anchor='middle'%3EA%3C/text%3E%3C/svg%3E">
   
-  <!-- Stylesheets -->
+  <!-- Fonts & Stylesheet -->
   <link rel="stylesheet" href="css/style.css">
+  <style>
+    /* Custom Luxury Styles for Angel One Recommendations */
+    .angel-header {
+      background: rgba(11, 17, 32, 0.95);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 12px 16px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+    .angel-header-inner {
+      max-width: 900px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-title {
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .brand-subtitle {
+      font-size: 0.72rem;
+      color: #00f59b;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 1px;
+    }
+    .pulse-dot {
+      width: 7px;
+      height: 7px;
+      background: #00f59b;
+      border-radius: 50%;
+      box-shadow: 0 0 10px #00f59b;
+      animation: pulseAnimation 1.6s infinite ease-in-out;
+    }
+    @keyframes pulseAnimation {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.8); }
+    }
+    .wallet-box {
+      background: linear-gradient(135deg, rgba(0, 245, 155, 0.12) 0%, rgba(0, 229, 255, 0.08) 100%);
+      border: 1px solid rgba(0, 245, 155, 0.3);
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-weight: 700;
+      font-size: 0.82rem;
+      color: #00f59b;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+    .nav-tabs-bar {
+      display: flex;
+      gap: 8px;
+      margin: 16px auto;
+      max-width: 900px;
+      padding: 0 16px;
+      overflow-x: auto;
+    }
+    .nav-tab-btn {
+      background: rgba(15, 23, 42, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: var(--text-secondary);
+      padding: 8px 18px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 0.82rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    }
+    .nav-tab-btn.active {
+      background: var(--grad-primary);
+      color: #022c22;
+      border-color: transparent;
+      box-shadow: 0 4px 14px rgba(0, 229, 255, 0.25);
+    }
+    .call-card {
+      background: linear-gradient(145deg, rgba(20, 28, 48, 0.85) 0%, rgba(13, 19, 35, 0.95) 100%);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .call-card:hover {
+      border-color: rgba(0, 229, 255, 0.3);
+      transform: translateY(-2px);
+    }
+    .call-card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+    .analyst-badge {
+      font-size: 0.72rem;
+      color: #00f59b;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .stock-badge-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .stock-avatar {
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #e11d48 0%, #be123c 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 0.85rem;
+      color: #ffffff;
+      box-shadow: 0 4px 12px rgba(225, 29, 72, 0.3);
+    }
+    .stock-name-title {
+      font-size: 1.1rem;
+      font-weight: 800;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .exchange-tag {
+      font-size: 0.65rem;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--text-muted);
+      font-weight: 700;
+    }
+    .cmp-display {
+      text-align: right;
+    }
+    .cmp-price {
+      font-size: 1.15rem;
+      font-weight: 800;
+      color: #ffffff;
+      font-family: var(--font-mono);
+    }
+    .cmp-change {
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+    .price-road-map {
+      background: rgba(10, 15, 29, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin: 12px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: relative;
+    }
+    .price-node {
+      text-align: center;
+      position: relative;
+      z-index: 2;
+    }
+    .price-node-badge {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.68rem;
+      font-weight: 800;
+      margin-bottom: 4px;
+    }
+    .price-node-badge.sl {
+      background: rgba(255, 51, 102, 0.2);
+      color: #ff3366;
+      border: 1px solid rgba(255, 51, 102, 0.4);
+    }
+    .price-node-badge.entry {
+      background: rgba(0, 229, 255, 0.2);
+      color: #00e5ff;
+      border: 1px solid rgba(0, 229, 255, 0.4);
+    }
+    .price-node-badge.target {
+      background: rgba(0, 245, 155, 0.2);
+      color: #00f59b;
+      border: 1px solid rgba(0, 245, 155, 0.4);
+    }
+    .price-node-label {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    .price-node-val {
+      font-size: 0.85rem;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: #ffffff;
+    }
+    .progress-road-line {
+      position: absolute;
+      top: 25px;
+      left: 15%;
+      right: 15%;
+      height: 2px;
+      background: rgba(255, 255, 255, 0.1);
+      z-index: 1;
+    }
+    .call-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding-top: 8px;
+    }
+    .potential-stats {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    .auto-trade-pill {
+      background: linear-gradient(135deg, rgba(0, 245, 155, 0.15) 0%, rgba(0, 229, 255, 0.1) 100%);
+      border: 1px solid rgba(0, 245, 155, 0.35);
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #00f59b;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-buy-action {
+      background: #00f59b;
+      color: #022c22;
+      font-weight: 800;
+      padding: 8px 20px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(0, 245, 155, 0.35);
+    }
+    .stats-metric-card {
+      background: rgba(15, 23, 42, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 14px;
+      padding: 14px;
+      text-align: center;
+      flex: 1;
+      min-width: 140px;
+    }
+    .stats-metric-val {
+      font-size: 1.35rem;
+      font-weight: 800;
+      font-family: var(--font-mono);
+      margin-top: 4px;
+    }
+  </style>
 </head>
 
 <body>
 
-  <!-- Floating Live Breaking Flash News Banner (Auto-Pushed via WebSocket) -->
-  <div id="breaking-news-banner-container" style="position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:99999; width:calc(100% - 24px); max-width:500px; display:none; pointer-events:auto; transition:all 0.3s cubic-bezier(0.16, 1, 0.3, 1);"></div>
-
   <!-- ========================================================================
        Top Sticky App Header
        ======================================================================== -->
-  <header class="app-header">
-    <div class="header-top">
-      <div class="brand">
-        <div class="brand-icon">🕯️</div>
-        <span>Stock<span style="background:var(--grad-primary); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">AI</span> <span style="font-size:0.65rem; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); border-radius:6px; padding:2px 6px; font-weight:800; letter-spacing:0.8px; vertical-align:middle; color:#00e5ff;">PRO</span></span>
+  <header class="angel-header">
+    <div class="angel-header-inner">
+      <div>
+        <div class="brand-title">
+          <span>👼 Angel One <span style="background:var(--grad-primary); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">Auto-Trader</span></span>
+          <span style="font-size:0.65rem; background:rgba(0, 229, 255, 0.15); border:1px solid rgba(0, 229, 255, 0.4); color:#00e5ff; border-radius:4px; padding:1px 5px; font-weight:800;">AI PAPER</span>
+        </div>
+        <div class="brand-subtitle">
+          <div class="pulse-dot"></div>
+          <span>On-Time Catch: ACTIVE • ₹10,000 / Trade</span>
+        </div>
       </div>
 
-      <!-- Desktop Nav -->
-      <div class="desktop-nav">
-        <button class="btn btn-outline btn-sm nav-btn active" data-tab="screener">📡 Screener</button>
-        <button class="btn btn-outline btn-sm nav-btn" data-tab="chart">📈 15m Chart</button>
-        <button class="btn btn-outline btn-sm nav-btn" data-tab="news">📰 News Sentiment</button>
-        <button class="btn btn-outline btn-sm nav-btn" data-tab="trading" id="nav-tab-trading">💼 Paper Trade</button>
-        <button class="btn btn-outline btn-sm nav-btn" data-tab="settings">⚙️ Settings</button>
+      <div class="wallet-box" id="header-wallet-btn" onclick="switchMainTab('trades')">
+        <span>💼</span>
+        <span id="header-equity-val">₹1,00,000</span>
       </div>
-
-      <div class="wallet-quick-pill" id="header-wallet-pill" onclick="switchTab('trading')">
-        💼 ₹1,00,000
-      </div>
-    </div>
-
-    <!-- Live Ticker Ribbon -->
-    <div class="ticker-ribbon" id="ticker-ribbon">
-      <div class="ticker-item"><span class="ticker-symbol">LOADING...</span></div>
     </div>
   </header>
 
   <!-- ========================================================================
+       Main Nav Tabs
+       ======================================================================== -->
+  <div class="nav-tabs-bar">
+    <button class="nav-tab-btn active" id="tab-btn-calls" onclick="switchMainTab('calls')">
+      🎯 Today's Calls <span class="badge" id="calls-badge-count" style="background:#00e5ff; color:#022c22; font-size:0.68rem; padding:1px 6px; border-radius:10px; font-weight:800;">1</span>
+    </button>
+    <button class="nav-tab-btn" id="tab-btn-trades" onclick="switchMainTab('trades')">
+      💼 Paper Trades (<span id="open-trades-count">1</span>)
+    </button>
+    <button class="nav-tab-btn" id="tab-btn-ingest" onclick="switchMainTab('ingest')">
+      ⚡ Test / Quick Catch
+    </button>
+    <button class="nav-tab-btn" id="tab-btn-settings" onclick="switchMainTab('settings')">
+      ⚙️ Connection
+    </button>
+  </div>
+
+  <!-- ========================================================================
        Main Content Container
        ======================================================================== -->
-  <main class="app-container">
+  <main style="max-width:900px; margin:0 auto; padding:0 16px;">
 
-    <!-- TAB 1: Screener & Signals Radar -->
-    <section id="view-screener" class="view-section active">
-      <div class="section-title-bar" style="flex-wrap:wrap; gap:10px;">
-        <h1 class="section-title">📡 <span style="background:linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">AI Market Screener</span></h1>
-        <div style="display:flex; gap:8px; align-items:center;">
-          <button class="btn btn-primary btn-sm" onclick="discoverTopStocks()" id="btn-discover-stocks" style="background:var(--grad-primary); color:#022c22; font-weight:800; border:none; box-shadow:0 4px 18px rgba(0,229,255,0.35);">🔥 Auto-Discover</button>
-          <button class="btn btn-outline btn-sm" onclick="scanNextBatchStocks()" id="btn-next-stocks">🔄 Scan Next 10 Stocks</button>
+    <!-- Offline / Reconnection Banner -->
+    <div id="server-status-banner" style="display:none; background:rgba(245, 158, 11, 0.12); border:1px solid rgba(245, 158, 11, 0.4); color:#fbbf24; border-radius:12px; padding:10px 14px; margin-bottom:14px; font-size:0.78rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="font-size:1.1rem;">⚠️</span>
+        <span>PC Backend Server కనెక్ట్ కాలేదు. మీ PC లో <strong>run_bot.bat</strong> లేదా <strong>start_mobile_live.bat</strong> రన్ చేయండి.</span>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="loadCallsAndPortfolio()" style="color:#fbbf24; border-color:rgba(245, 158, 11, 0.4); font-size:0.7rem; border-radius:6px;">
+        🔄 Retry Connect
+      </button>
+    </div>
+
+    <!-- TAB 1: Angel One Research Recommendations (Matches Screen exactly) -->
+    <section id="view-calls" class="view-panel" style="display:block;">
+      
+      <!-- Sub-filter pills (Intraday, Short Term, Long Term) -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:8px;">
+        <div style="display:flex; gap:6px;">
+          <button class="btn btn-primary btn-sm" id="sub-cat-intraday" onclick="filterCategory('Intraday', this)" style="border-radius:20px; font-weight:700;">Intraday</button>
+          <button class="btn btn-outline btn-sm" id="sub-cat-short" onclick="filterCategory('Short Term', this)" style="border-radius:20px; font-weight:700;">Short Term</button>
+          <button class="btn btn-outline btn-sm" id="sub-cat-long" onclick="filterCategory('Long Term', this)" style="border-radius:20px; font-weight:700;">Long Term</button>
+          <button class="btn btn-outline btn-sm" id="sub-cat-all" onclick="filterCategory('ALL', this)" style="border-radius:20px; font-weight:700;">All</button>
         </div>
+
+        <button class="btn btn-outline btn-sm" onclick="loadCallsAndPortfolio()" style="border-radius:8px; font-size:0.75rem;">
+          🔄 Refresh
+        </button>
       </div>
 
-      <!-- Hedge-Fund Capital Shield Banner -->
-      <div id="capital-shield-banner" style="background:linear-gradient(135deg, rgba(0,229,255,0.12) 0%, rgba(0,245,155,0.06) 100%); border:1px solid rgba(0,229,255,0.3); border-radius:12px; padding:10px 14px; margin-bottom:12px; font-size:0.8rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
-        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-          <span style="font-size:1.15rem;">🛡️</span>
-          <span><strong>Risk Guard:</strong> 1:1 Break-Even Lock Active | Circuit Breaker: <strong id="shield-cb-text" style="color:#00e5ff;">Normal (0/2 Losses)</strong></span>
-          <span id="vix-adaptive-pill" style="font-size:0.7rem; color:#f59e0b; background:rgba(245,158,11,0.15); padding:2px 7px; border-radius:4px; border:1px solid rgba(245,158,11,0.3);">⚡ VIX: Live Calibrating...</span>
-        </div>
-        <span class="badge" id="shield-regime-badge" style="background:#00f59b; color:#022c22; font-size:0.68rem; font-weight:800; letter-spacing:0.5px; box-shadow:0 0 12px rgba(0,245,155,0.35);">PROTECTION ACTIVE</span>
-      </div>
-
-      <!-- Sector Rotation & Institutional Money Flow Bar -->
-      <div id="sector-rotation-bar" style="background:linear-gradient(135deg, rgba(15,23,42,0.85) 0%, rgba(11,17,32,0.9) 100%); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:10px 14px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; box-shadow:0 4px 16px rgba(0,0,0,0.25);">
-        <div style="font-size:0.78rem; color:var(--text-muted); display:flex; align-items:center; gap:8px;">
-          <span style="font-size:1rem;">🔄</span>
-          <span><strong style="color:#ffffff;">Sector Inflow:</strong></span>
-          <span id="sector-flow-text" style="color:var(--text-secondary); font-weight:600;">Scanning institutional rotation...</span>
-        </div>
-        <div id="sector-badges-container" style="display:flex; gap:6px; flex-wrap:wrap;">
-          <!-- Populated via JS -->
-        </div>
-      </div>
-
-      <!-- Hot Sector & Category Filter Pills -->
-      <div class="screener-categories-bar" id="screener-categories-bar">
-        <button class="cat-pill active" data-cat="ALL" onclick="filterScreenerCategory('ALL', this)">🔥 All 100+ Stocks</button>
-        <button class="cat-pill" data-cat="LEADERS" onclick="filterScreenerCategory('LEADERS', this)">👑 Sector Leaders</button>
-        <button class="cat-pill" data-cat="DEFENCE" onclick="filterScreenerCategory('DEFENCE', this)">🚀 Defence & Railway</button>
-        <button class="cat-pill" data-cat="ENERGY" onclick="filterScreenerCategory('ENERGY', this)">⚡ Green Energy & Power</button>
-        <button class="cat-pill" data-cat="MIDCAP" onclick="filterScreenerCategory('MIDCAP', this)">📈 Midcap Multibaggers</button>
-        <button class="cat-pill" data-cat="BANKING" onclick="filterScreenerCategory('BANKING', this)">🏦 Banking & Finance</button>
-        <button class="cat-pill" data-cat="AUTO" onclick="filterScreenerCategory('AUTO', this)">🚗 Auto & EV</button>
-        <button class="cat-pill" data-cat="IT" onclick="filterScreenerCategory('IT', this)">💻 IT & Tech</button>
-        <button class="cat-pill" data-cat="METALS" onclick="filterScreenerCategory('METALS', this)">🏗️ Metals & Mining</button>
-        <button class="cat-pill" data-cat="PHARMA" onclick="filterScreenerCategory('PHARMA', this)">💊 Pharma</button>
-      </div>
-
-      <div class="screener-grid" id="screener-grid">
-        <!-- Rendered dynamically by app.js -->
-      </div>
-    </section>
-
-    <!-- TAB 2: 15m Candlestick Chart & Confluence -->
-    <section id="view-chart" class="view-section">
-      <div class="chart-controls-bar">
-        <div class="stock-selector-wrap">
-          <label style="color:var(--text-muted); font-size:0.8rem;">Stock:</label>
-          <select class="custom-select stock-select-dropdown" onchange="selectStock(this.value)">
-            <!-- Populated via JS -->
-          </select>
-        </div>
-        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-          <button class="btn btn-outline btn-sm" id="btn-open-whale-depth" onclick="openWhaleDepthModal(state.currentSymbol)" style="border-color:#00e5ff; color:#00e5ff; font-weight:800; font-size:0.75rem; padding:4px 10px; background:rgba(0,229,255,0.08);">
-            🌊 Whale Depth (Level 2)
-          </button>
-          <span id="chart-cmp-display" style="font-size:1.3rem; font-weight:700; font-family:var(--font-mono);">₹0.00</span>
-          <span id="chart-signal-badge" class="badge badge-neutral">NEUTRAL</span>
-        </div>
-      </div>
-
-      <!-- Institutional Badges Ribbon -->
-      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
-        <span id="chart-smart-money-badge" class="badge" style="background:rgba(6,182,212,0.2); color:#06b6d4; font-size:0.75rem;">🐋 Smart Money: Normal Volume</span>
-        <span id="chart-mtf-badge" class="badge" style="background:rgba(16,185,129,0.2); color:#10b981; font-size:0.75rem;">📊 MTF: Confluence Aligned</span>
-        <span id="chart-regime-badge" class="badge" style="background:rgba(255,255,255,0.1); color:#cbd5e1; font-size:0.75rem;">🛡️ Regime: Normal</span>
-      </div>
-
-      <!-- Candlestick Chart Canvas -->
-      <div class="chart-card">
-        <div class="chart-header">
-          <span style="font-size:0.85rem; font-weight:600; color:var(--text-secondary);">
-            15-Minute Candlesticks (with EMA 9 / EMA 21 & Patterns)
-          </span>
-          <span style="font-size:0.75rem; color:var(--text-muted);">Scroll/pinch to pan</span>
-        </div>
-        <canvas id="candlestick-canvas"></canvas>
-        <canvas id="rsi-canvas"></canvas>
-
-        <div style="margin-top:10px;">
-          <div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:4px;">Detected Candlestick Patterns:</div>
-          <div class="patterns-ribbon" id="chart-patterns-ribbon">
-            <span style="font-size:0.75rem; color:var(--text-muted);">None detected in current 15m bar</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Confluence Breakdown Box -->
-      <div class="confluence-box">
-        <div style="font-weight:700; font-size:0.95rem; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
-          <span>🧠 AI Confluence Synthesis</span>
-          <span style="font-size:0.75rem; color:var(--text-muted);">6-Pillar Deep Multi-Factor Model</span>
-        </div>
-
-        <div class="confluence-scores-row">
-          <div class="score-chip" onclick="openConfidenceScorecard()" style="cursor:pointer; border-color:rgba(0,229,255,0.4);" title="Tap to inspect full 5-pillar breakdown">
-            <div class="score-chip-title" style="display:flex; justify-content:space-between;">
-              <span>Total AI Confluence</span>
-              <span style="color:var(--color-cyan); font-weight:700;">🔍 Inspect</span>
-            </div>
-            <div class="score-chip-val text-cyan" id="chip-confluence">0%</div>
-          </div>
-          <div class="score-chip">
-            <div class="score-chip-title">News Sentiment (18%)</div>
-            <div class="score-chip-val" id="chip-sentiment">0.0</div>
-          </div>
-          <div class="score-chip">
-            <div class="score-chip-title">Candlestick Bias (22%)</div>
-            <div class="score-chip-val" id="chip-candlestick">0.0</div>
-          </div>
-          <div class="score-chip">
-            <div class="score-chip-title">Technicals & Trend (35%)</div>
-            <div class="score-chip-val" id="chip-technical">0.0</div>
-          </div>
-          <div class="score-chip">
-            <div class="score-chip-title">Option Chain (15%)</div>
-            <div class="score-chip-val" id="chip-option-chain">0.0</div>
-          </div>
-          <div class="score-chip">
-            <div class="score-chip-title">Macro & Trend (10%)</div>
-            <div class="score-chip-val" id="chip-macro">0.0</div>
-          </div>
-        </div>
-
-        <div style="font-size:0.8rem; font-weight:600; color:var(--text-muted); margin-bottom:6px;">Analysis & Confluence Reasons:</div>
-        <ul class="reasons-list" id="confluence-reasons-list">
-          <li class="reason-item"><span class="reason-bullet">›</span> Loading technical confluence...</li>
-        </ul>
-      </div>
-
-      <!-- NSE Live Option Chain, PCR & Max Pain Widget -->
-      <div class="confluence-box" id="option-chain-card" style="margin-top:14px; background:rgba(15,23,42,0.7);">
-        <div style="font-weight:700; font-size:0.95rem; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
-          <div style="display:flex; align-items:center; gap:6px;">
-            <span>📊 NSE Option Chain & PCR Tracker</span>
-            <span class="badge" style="background:#00e5ff; color:#022c22; font-size:0.65rem;">F&O DERIVATIVE</span>
-          </div>
-          <span id="pcr-badge" class="badge" style="background:rgba(0,245,155,0.15); color:#00f59b; font-size:0.72rem;">PCR: 1.00 (Neutral)</span>
-        </div>
-
-        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-bottom:10px;">
-          <div style="background:rgba(255,255,255,0.03); padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.06);">
-            <div style="font-size:0.7rem; color:var(--text-muted);">Put-Call Ratio (PCR)</div>
-            <div id="pcr-val-display" style="font-size:1.1rem; font-weight:800; color:#00e5ff; font-family:var(--font-mono);">1.00</div>
-          </div>
-          <div style="background:rgba(255,255,255,0.03); padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.06);">
-            <div style="font-size:0.7rem; color:var(--text-muted);">Max Pain Strike</div>
-            <div id="max-pain-display" style="font-size:1.1rem; font-weight:800; color:#f59e0b; font-family:var(--font-mono);">₹0.00</div>
-          </div>
-          <div style="background:rgba(255,255,255,0.03); padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.06);">
-            <div style="font-size:0.7rem; color:var(--text-muted);">Short-Covering Alert</div>
-            <div id="short-cover-display" style="font-size:0.8rem; font-weight:700; color:#94a3b8; margin-top:3px;">No Call Unwinding</div>
-          </div>
-        </div>
-
-        <!-- Strike Table -->
-        <div class="option-chain-wrap">
-          <table class="option-chain-table">
-            <thead>
-              <tr>
-                <th style="color:#00e5ff;">Call OI</th>
-                <th style="color:#94a3b8;">Chg</th>
-                <th style="color:#ffffff; background:rgba(255,255,255,0.08);">STRIKE</th>
-                <th style="color:#94a3b8;">Chg</th>
-                <th style="color:#00f59b;">Put OI</th>
-              </tr>
-            </thead>
-            <tbody id="option-chain-table-body">
-              <tr><td colspan="5" style="color:var(--text-muted); padding:10px;">Select a stock to load live NSE Option Chain...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- TAB 3: AI News & Sentiment Radar -->
-    <section id="view-news" class="view-section">
-      <div class="section-title-bar">
-        <h1 class="section-title">📰 News Sentiment Radar</h1>
-        <select class="custom-select stock-select-dropdown" onchange="selectStock(this.value)">
-          <!-- Populated via JS -->
-        </select>
-      </div>
-
-      <!-- Real-Time Flash News & Price Impact Predictor -->
-      <div style="background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.3); border-radius:12px; padding:12px 14px; margin-bottom:14px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:6px;">
-          <div style="font-weight:800; font-size:0.95rem; color:#f59e0b; display:flex; align-items:center; gap:6px;">
-            <span>⚡ Real-Time Flash News & Price Impact Predictor</span>
-            <span class="badge" style="background:#f59e0b; color:#000; font-size:0.65rem;">LIVE NSE</span>
-          </div>
-          <div style="display:flex; gap:6px; flex-wrap:wrap;">
-            <button class="btn btn-outline btn-sm" onclick="testAlertSound()" style="font-size:0.72rem; padding:3px 8px; border-color:#10b981; color:#10b981;">🔊 Test Alert Sound</button>
-            <button class="btn btn-outline btn-sm" onclick="testLiveNewsAlert()" style="font-size:0.72rem; padding:3px 8px; border-color:#06b6d4; color:#06b6d4;">🧪 Test Alert Pop-Up</button>
-            <button class="btn btn-outline btn-sm" onclick="loadFlashNews()" style="font-size:0.72rem; padding:3px 8px; border-color:rgba(245,158,11,0.5); color:#f59e0b;">🔄 Scan Flash News</button>
-          </div>
-        </div>
-        <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:8px;">
-          Detects breaking earnings, mega orders, and regulatory actions with projected price movement %!
-        </div>
-        <div id="flash-news-container" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:10px;">
-          <div style="font-size:0.78rem; color:var(--text-muted); padding:10px; text-align:center;">Click "Scan Flash News" to evaluate real-time catalysts across Dalal Street...</div>
-        </div>
-      </div>
-
-      <!-- Sentiment Meter Card -->
-      <div class="sentiment-radar-card">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <span style="font-weight:700; font-size:1.05rem;">Daily Media Sentiment</span>
-          <span id="sentiment-score-val" style="font-size:1.4rem; font-weight:800; font-family:var(--font-mono); color:var(--color-cyan);">+0.00</span>
-        </div>
-        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:2px;">
-          Classification: <strong id="sentiment-label-val" style="color:var(--text-primary);">NEUTRAL</strong>
-        </div>
-
-        <div class="sentiment-gauge-wrap">
-          <div class="gauge-bar-track">
-            <div class="gauge-marker" id="sentiment-gauge-marker" style="left:50%;"></div>
-          </div>
-          <div class="gauge-labels">
-            <span class="text-bearish">Bearish (-1.0)</span>
-            <span class="text-neutral">Neutral (0.0)</span>
-            <span class="text-bullish">Bullish (+1.0)</span>
-          </div>
-        </div>
-
-        <div style="display:flex; gap:16px; margin-top:10px; font-size:0.8rem;">
-          <div>Bullish Articles: <strong class="text-bullish" id="sentiment-pos-count">0</strong></div>
-          <div>Neutral: <strong class="text-neutral" id="sentiment-neu-count">0</strong></div>
-          <div>Bearish: <strong class="text-bearish" id="sentiment-neg-count">0</strong></div>
-        </div>
-      </div>
-
-      <!-- AI Executive Market Summary -->
-      <div class="ai-summary-card">
-        <div class="ai-summary-header">
-          <span>✨ AI Quantitative Market Synthesis</span>
-        </div>
-        <div class="ai-summary-text" id="ai-summary-text">
-          Loading breaking financial coverage analysis...
-        </div>
-      </div>
-
-      <!-- Breaking News Feed -->
-      <div style="font-weight:700; font-size:1rem; margin-bottom:10px;">Breaking News Stream (Google RSS & Yahoo Finance)</div>
-      <div class="news-stream-list" id="news-stream-list">
-        <!-- News cards populated via JS -->
-      </div>
-    </section>
-
-    <!-- TAB 4: Paper Trading Simulator -->
-    <section id="view-trading" class="view-section">
-      <div class="section-title-bar" style="margin-bottom:10px;">
-        <h1 class="section-title" id="section-title-trading">🧪 Paper Trading & AI Auto-Trader</h1>
-        <button class="btn btn-outline btn-sm text-bearish" onclick="resetPortfolioPrompt()" style="font-size:0.75rem; padding:4px 10px;">⚠️ Reset Virtual</button>
-      </div>
-
-      <!-- Trade Engine Selector (Paper Virtual vs Real Angel One Broker) -->
-      <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:8px 12px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-          <span style="font-size:0.78rem; font-weight:800; color:var(--text-muted);">Trade Engine:</span>
-          <button class="btn btn-sm" id="btn-engine-paper" onclick="setExecutionMode('PAPER')" style="font-size:0.75rem; padding:4px 12px; font-weight:800; background:rgba(0,229,255,0.18); border:1px solid #00e5ff; color:#00e5ff;">
-            🧪 Paper Trading
-          </button>
-          <button class="btn btn-sm btn-outline" id="btn-engine-broker" onclick="setExecutionMode('REAL_BROKER')" style="font-size:0.75rem; padding:4px 12px; font-weight:800; color:var(--text-muted); border-color:rgba(255,255,255,0.2);">
-            ⚡ Angel One Live Broker
-          </button>
-        </div>
-        <div id="broker-live-status-pill" style="font-size:0.72rem; color:#10b981; background:rgba(16,185,129,0.12); padding:3px 10px; border-radius:12px; border:1px solid rgba(16,185,129,0.3); font-weight:700;">
-          🔒 Demat Delivery Safe (5x MIS Only)
-        </div>
-      </div>
-
-      <!-- Demat Holding Protection Shield (Clean Status Bar) -->
-      <div id="demat-shield-card" style="display:none; background:rgba(16,185,129,0.06); border:1px solid rgba(16,185,129,0.25); border-radius:10px; padding:8px 12px; margin-bottom:10px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-          <div style="display:flex; align-items:center; gap:8px;">
-            <span style="font-size:1.15rem;">🛡️</span>
-            <div>
-              <span style="font-weight:800; font-size:0.85rem; color:#10b981;">Demat Shield Active</span>
-              <span style="font-size:0.72rem; color:var(--text-muted); margin-left:6px;">Delivery CNC locked. All bot orders use 5x Intraday (MIS).</span>
-            </div>
-          </div>
-          <div style="display:flex; align-items:center; gap:6px;">
-            <label style="display:none;"><input type="checkbox" id="check-exclude-demat" checked onchange="toggleDematExclusion(this.checked)"></label>
-            <div id="demat-holdings-chips-container" style="display:flex; flex-wrap:wrap; gap:5px;"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Autonomous AI Auto-Trader Action Bar -->
-      <div style="background:linear-gradient(135deg, rgba(16,185,129,0.1), rgba(6,182,212,0.06)); border:1px solid rgba(16,185,129,0.35); border-radius:12px; padding:10px 14px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-          <div style="font-weight:800; font-size:0.95rem; color:#fff; display:flex; align-items:center; gap:6px;">
-            <span>🤖 AI Auto-Trader</span>
-            <span class="live-badge-stream"><span class="dot"></span>ACTIVE</span>
-          </div>
-          <div style="display:flex; align-items:center; gap:6px;">
-            <button class="btn btn-sm" id="btn-mode-approval" onclick="setAiTradeMode('APPROVAL')" style="font-size:0.72rem; padding:3px 10px; font-weight:800; background:rgba(16,185,129,0.25); border:1px solid #10b981; color:#10b981;">
-              🛡️ Approval Mode
-            </button>
-            <button class="btn btn-sm btn-outline" id="btn-mode-fullauto" onclick="setAiTradeMode('FULL_AUTO')" style="font-size:0.72rem; padding:3px 10px; font-weight:700; color:var(--text-muted); border-color:rgba(255,255,255,0.15);">
-              ⚡ Full Auto
-            </button>
-          </div>
-          <span class="badge" id="ai-autotrader-badge" style="display:none;"></span>
-          <span class="badge" id="market-session-pill" style="font-size:0.68rem; background:rgba(56,189,248,0.12); color:#38bdf8; border:1px solid rgba(56,189,248,0.25); font-weight:700;">⏱️ IST Session</span>
-        </div>
+      <!-- Auto-Trade Status Banner -->
+      <div style="background:linear-gradient(135deg, rgba(0, 245, 155, 0.1) 0%, rgba(0, 229, 255, 0.05) 100%); border:1px solid rgba(0, 245, 155, 0.25); border-radius:12px; padding:10px 14px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
         <div style="display:flex; align-items:center; gap:8px;">
-          <button class="btn btn-outline btn-sm" onclick="triggerPreMarketPlan()" id="btn-pre-market-radar" style="padding:8px 14px; font-weight:800; font-size:0.8rem; border-color:rgba(56,189,248,0.4); color:#38bdf8; background:rgba(56,189,248,0.08);">
-            🌅 Pre-Market Radar
-          </button>
-          <button class="btn btn-bullish btn-sm" onclick="triggerAiAutoTradeNow()" id="btn-trigger-ai-trade" style="padding:8px 16px; font-weight:800; font-size:0.86rem; box-shadow:0 0 16px rgba(16,185,129,0.3);">
-            ⚡ Live Market Scan
-          </button>
+          <span style="font-size:1.15rem;">⚡</span>
+          <span style="font-size:0.8rem;"><strong>Instant Auto-Catch:</strong> Angel One suggest చేయగానే AI ఆటోమేటిక్‌గా <strong>₹10,000</strong> పేపర్ ట్రేడ్ చేస్తుంది!</span>
+        </div>
+        <span style="font-size:0.72rem; background:#00f59b; color:#022c22; font-weight:800; padding:2px 8px; border-radius:6px;">₹10,000 / TRADE</span>
+      </div>
+
+      <div style="font-size:0.9rem; font-weight:800; color:#cbd5e1; margin-bottom:12px; display:flex; align-items:center; gap:6px;">
+        <span>Today's Calls</span>
+      </div>
+
+      <!-- Active Calls List -->
+      <div id="active-calls-container">
+        <!-- Populated via JS -->
+      </div>
+
+      <!-- Past Cash Calls Accordion Header -->
+      <div style="margin-top:24px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-size:0.9rem; font-weight:800; color:#94a3b8;">Past Cash Calls</span>
+        <button class="btn btn-outline btn-sm" onclick="togglePastCalls()" id="btn-toggle-past" style="font-size:0.75rem; border-radius:6px;">
+          View All ▼
+        </button>
+      </div>
+
+      <div id="past-calls-container" style="display:none;">
+        <!-- Populated via JS -->
+      </div>
+    </section>
+
+    <!-- TAB 2: Paper Trading & Portfolio (₹10,000 Allocated Trades) -->
+    <section id="view-trades" class="view-panel" style="display:none;">
+      
+      <!-- Portfolio Metric Cards -->
+      <div style="display:flex; gap:10px; margin-bottom:18px; flex-wrap:wrap;">
+        <div class="stats-metric-card">
+          <div style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">TOTAL EQUITY</div>
+          <div class="stats-metric-val" id="port-equity-val" style="color:#00f59b;">₹1,00,000</div>
+        </div>
+        <div class="stats-metric-card">
+          <div style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">AVAILABLE CASH</div>
+          <div class="stats-metric-val" id="port-cash-val" style="color:#ffffff;">₹90,211</div>
+        </div>
+        <div class="stats-metric-card">
+          <div style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">INVESTED (₹10k/Trade)</div>
+          <div class="stats-metric-val" id="port-invested-val" style="color:#00e5ff;">₹9,789</div>
+        </div>
+        <div class="stats-metric-card">
+          <div style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">UNREALIZED P&L</div>
+          <div class="stats-metric-val" id="port-unrealized-pnl" style="color:#00f59b;">+₹16.50</div>
         </div>
       </div>
 
-      <!-- Sleek 3-Card Financial Overview (KPIs) -->
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-bottom:14px;">
-        <div class="kpi-card" style="padding:12px;">
-          <div class="kpi-label">Available Margin</div>
-          <div class="kpi-val" id="kpi-cash" style="font-size:1.15rem; font-weight:800; color:#fff;">₹1,00,000</div>
-          <div id="kpi-buying-power" style="font-size:0.72rem; color:#00e5ff; font-weight:700; margin-top:3px;">⚡ 5x Buying Power: ₹5,00,000</div>
-          <span id="kpi-equity" style="display:none;">₹1,00,000</span>
-        </div>
-        <div class="kpi-card" style="padding:12px;">
-          <div class="kpi-label">Today's Realized P&L</div>
-          <div class="kpi-val" id="kpi-realized-pnl" style="font-size:1.15rem; font-weight:800;">₹0.00</div>
-          <div style="font-size:0.7rem; color:var(--text-muted); margin-top:3px;">Net Closed Profit/Loss</div>
-        </div>
-        <div class="kpi-card" style="padding:12px;">
-          <div class="kpi-label">🎯 AI Win Rate</div>
-          <div class="kpi-val text-cyan" id="kpi-winrate" style="font-size:1.15rem; font-weight:800;">0.0%</div>
-          <div style="font-size:0.7rem; color:var(--text-muted); margin-top:3px;">
-            <span id="kpi-win-trades" class="text-bullish" style="font-weight:700;">0 Wins</span> · <span id="kpi-loss-trades" class="text-bearish" style="font-weight:700;">0 Losses</span>
-          </div>
-        </div>
+      <!-- Open Positions -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <span style="font-size:0.95rem; font-weight:800; color:#ffffff;">Active Paper Positions</span>
+        <span style="font-size:0.75rem; color:var(--text-muted);">Auto Stop Loss & Target Protected</span>
       </div>
 
+      <div id="open-positions-list">
+        <!-- Populated via JS -->
+      </div>
 
-      <!-- Trade Execution Ticket -->
-      <div class="trade-ticket-card">
+      <!-- Closed Positions History -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:24px; margin-bottom:12px;">
+        <span style="font-size:0.95rem; font-weight:800; color:#94a3b8;">Completed Trades History</span>
+        <button class="btn btn-outline btn-sm" onclick="resetPortfolio()" style="font-size:0.72rem; color:#ff3366; border-color:rgba(255, 51, 102, 0.3);">
+          🔄 Reset Portfolio
+        </button>
+      </div>
+
+      <div id="closed-positions-list">
+        <!-- Populated via JS -->
+      </div>
+    </section>
+
+    <!-- TAB 3: Instant Test / Push Ingest -->
+    <section id="view-ingest" class="view-panel" style="display:none;">
+      
+      <div class="call-card">
+        <h2 style="font-size:1.1rem; font-weight:800; color:#ffffff; margin-bottom:8px;">⚡ Instant Test Live Recommendation</h2>
+        <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:16px;">
+          Angel One కొత్త రికమండేషన్ ఇచ్చినప్పుడు AI ఎలా క్షణాల్లో క్యాచ్ చేసి ₹10,000 ఆటో పేపర్ ట్రేడ్ చేస్తుందో వెంటనే టెస్ట్ చేసి చూడండి:
+        </p>
+
+        <button class="btn btn-primary" onclick="triggerTestCall()" id="btn-trigger-test" style="width:100%; padding:12px; font-weight:800; font-size:0.9rem; background:var(--grad-primary); color:#022c22; border:none; border-radius:10px; box-shadow:0 4px 18px rgba(0, 229, 255, 0.35);">
+          🚀 Trigger Sample Angel One Call (Instant ₹10k Trade)
+        </button>
+      </div>
+
+      <!-- Paste Notification Box -->
+      <div class="call-card" style="margin-top:16px;">
+        <h2 style="font-size:1.1rem; font-weight:800; color:#ffffff; margin-bottom:8px;">📲 Paste Angel One Push Notification</h2>
+        <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">
+          మీ ఫోన్‌కు Angel One నుండి ఏదైనా Analyst Call నోటిఫికేషన్ రాగానే దాన్ని ఇక్కడ పేస్ట్ చేయండి:
+        </p>
+
+        <textarea id="raw-notification-input" rows="3" class="form-input" style="width:100%; border-radius:10px; font-size:0.85rem; padding:10px; margin-bottom:12px;" placeholder="ఉదాహరణకు: Analyst call: Buy ETERNAL at 326.30, SL 323.00, Target 331.50"></textarea>
+
+        <button class="btn btn-outline" onclick="parseAndTradeNotification()" style="width:100%; padding:10px; font-weight:700; border-radius:10px;">
+          ⚡ Parse & Auto Paper Trade
+        </button>
+      </div>
+
+      <!-- Webhook API Docs -->
+      <div class="call-card" style="margin-top:16px; font-size:0.78rem; color:var(--text-muted);">
+        <strong style="color:#ffffff;">🤖 Webhook Endpoint for Android Notification Listener:</strong><br>
+        <code>POST /api/angel-research/ingest</code><br>
+        Payload: <code>{"symbol": "ETERNAL", "entry_price": 326.30, "stop_loss": 323.00, "target_price": 331.50, "category": "Intraday"}</code>
+      </div>
+
+    </section>
+
+    <!-- TAB 4: Connection & Settings -->
+    <section id="view-settings" class="view-panel" style="display:none;">
+      
+      <!-- Angel One SmartAPI Connect Card -->
+      <div class="call-card" style="border-color:rgba(0, 245, 155, 0.3);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-          <div style="font-weight:700; font-size:1rem;" id="order-ticket-title">Virtual Order Ticket</div>
-          <span class="badge" id="order-ticket-mode-badge" style="background:rgba(0,229,255,0.15); color:#00e5ff; border:1px solid rgba(0,229,255,0.3); font-size:0.7rem;">🧪 PAPER MODE</span>
+          <h2 style="font-size:1.1rem; font-weight:800; color:#ffffff; display:flex; align-items:center; gap:8px;">
+            <span>👼 Angel One SmartAPI Link</span>
+          </h2>
+          <span id="angel-status-badge" class="badge" style="background:rgba(255, 51, 102, 0.15); color:#ff3366; border:1px solid rgba(255, 51, 102, 0.3); font-weight:800; font-size:0.72rem; padding:3px 8px; border-radius:6px;">
+            🔴 Disconnected
+          </span>
         </div>
+
+        <p style="font-size:0.78rem; color:var(--text-secondary); margin-bottom:14px;">
+          మీ Angel One అకౌంట్‌ను లింక్ చేయడానికి <a href="https://smartapi.angelone.in" target="_blank" style="color:#00e5ff;">smartapi.angelone.in</a> లోని వివరాలు ఎంటర్ చేయండి:
+        </p>
+
+        <div style="margin-bottom:10px;">
+          <label style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">CLIENT CODE (User ID):</label>
+          <input type="text" id="angel-client-code" class="form-input" style="width:100%; margin-top:3px;" placeholder="e.g. M207216" value="M207216">
+        </div>
+
+        <div style="margin-bottom:10px;">
+          <label style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">SMARTAPI API KEY:</label>
+          <input type="text" id="angel-api-key" class="form-input" style="width:100%; margin-top:3px;" placeholder="API Key from SmartAPI portal" value="KLcQJzrD">
+        </div>
+
+        <div style="margin-bottom:10px;">
+          <label style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">PASSWORD (4-Digit Trading PIN):</label>
+          <input type="password" id="angel-password" class="form-input" style="width:100%; margin-top:3px;" placeholder="Your Angel One PIN" value="1995">
+        </div>
+
+        <div style="margin-bottom:14px;">
+          <label style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">TOTP SECRET (Authenticator Key):</label>
+          <input type="text" id="angel-totp" class="form-input" style="width:100%; margin-top:3px;" placeholder="Base32 TOTP Secret" value="JXDOER6HYCVKM2HYRLRASLAFUM">
+        </div>
+
+        <button class="btn btn-primary" onclick="connectAngelOne()" id="btn-connect-angel" style="width:100%; padding:11px; font-weight:800; background:var(--grad-primary); color:#022c22; border:none; border-radius:10px; box-shadow:0 4px 16px rgba(0, 245, 155, 0.3);">
+          🔗 Connect Angel One Account
+        </button>
+      </div>
+
+      <!-- Server Connection Card -->
+      <div class="call-card" style="margin-top:16px;">
+        <h2 style="font-size:1.05rem; font-weight:800; color:#ffffff; margin-bottom:14px;">🌐 Mobile to PC Server Link</h2>
         
-        <div class="order-type-tabs">
-          <button type="button" class="order-type-btn active buy-active" id="order-btn-buy">BUY / LONG</button>
-          <button type="button" class="order-type-btn" id="order-btn-sell">SELL / SHORT</button>
+        <div style="margin-bottom:14px;">
+          <label style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">BACKEND SERVER URL (LAN / Cloud):</label>
+          <input type="text" id="setting-server-url" class="form-input" style="width:100%; margin-top:4px;" placeholder="http://192.168.29.28:8000">
+          <small style="color:var(--text-dim); font-size:0.7rem; display:block; margin-top:4px;">
+            మీ కంప్యూటర్‌లో <code>start_mobile_live.bat</code> రన్ చేస్తే వచ్చే Cloudflare URL లేదా మీ Wi-Fi IP (<code>http://192.168.29.28:8000</code>).
+          </small>
         </div>
 
-        <form id="trade-ticket-form">
-          <div class="form-grid">
-            <div class="form-group">
-              <label>Symbol</label>
-              <select id="order-symbol-select" class="custom-select stock-select-dropdown" onchange="selectStock(this.value)">
-                <!-- JS populated -->
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Current Price</label>
-              <input type="number" id="order-price-input" step="0.01" readonly style="opacity:0.8;">
-            </div>
-            <div class="form-group">
-              <div style="display:flex; justify-content:space-between; align-items:center;">
-                <label>Quantity</label>
-                <span id="order-max-qty-pill" style="font-size:0.72rem; color:#10b981; font-weight:700;">Max 5x: --</span>
-              </div>
-              <input type="number" id="order-qty-input" value="1" min="1" required>
-              <div class="quick-qty-chips" style="margin-top:4px;">
-                <span class="qty-chip" data-add="1">+1</span>
-                <span class="qty-chip" data-add="5">+5</span>
-                <span class="qty-chip" data-add="10">+10</span>
-                <span class="qty-chip" data-add="25">+25</span>
-              </div>
-
-              <!-- Smart 5x Margin Sizing Chips -->
-              <div style="margin-top:6px; display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
-                <span style="font-size:0.7rem; color:var(--text-muted); font-weight:700;">5x Margin:</span>
-                <button type="button" class="btn btn-outline btn-sm" onclick="applyMarginFraction(0.25)" style="padding:2px 7px; font-size:0.68rem; border-color:rgba(0,229,255,0.4); color:#00e5ff;">25%</button>
-                <button type="button" class="btn btn-outline btn-sm" onclick="applyMarginFraction(0.50)" style="padding:2px 7px; font-size:0.68rem; border-color:rgba(0,229,255,0.4); color:#00e5ff;">50%</button>
-                <button type="button" class="btn btn-outline btn-sm" onclick="applyMarginFraction(0.75)" style="padding:2px 7px; font-size:0.68rem; border-color:rgba(0,229,255,0.4); color:#00e5ff;">75%</button>
-                <button type="button" class="btn btn-outline btn-sm" id="btn-margin-max" onclick="applyMarginFraction(1.0)" style="padding:2px 8px; font-size:0.68rem; border-color:#10b981; color:#10b981; font-weight:800;">⚡ Max 5x Qty</button>
-              </div>
-
-              <!-- Dynamic Margin Validation Alert -->
-              <div id="order-margin-status-box" style="margin-top:6px; font-size:0.72rem; padding:4px 8px; border-radius:6px; background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.25); color:#10b981; display:flex; justify-content:space-between; align-items:center;">
-                <span id="order-margin-status-text">💼 Cash: ₹0 | 5x Power: ₹0</span>
-                <span id="order-margin-status-badge" style="font-weight:800;">✅ Margin OK</span>
-              </div>
-            </div>
-            <div class="form-group">
-              <label>Stop Loss (SL)</label>
-              <input type="number" id="order-sl-input" step="0.01" placeholder="Optional SL">
-            </div>
-            <div class="form-group">
-              <label>Target Price (TP)</label>
-              <input type="number" id="order-tp-input" step="0.01" placeholder="Optional TP">
-            </div>
-          </div>
-
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; flex-wrap:wrap; gap:8px;">
-            <div style="font-size:0.85rem; color:var(--text-muted);">
-              <div>Total Order Value: <strong id="order-total-est" style="color:var(--text-primary); font-size:0.95rem;">₹0.00</strong></div>
-              <div style="font-size:0.8rem; color:#10b981; font-weight:700; margin-top:2px;">
-                ⚡ 5x Margin Required (20%): <strong id="order-margin-est" style="color:#10b981; font-size:0.95rem;">₹0.00</strong>
-              </div>
-            </div>
-            <button type="submit" class="btn btn-bullish" id="order-submit-btn">
-              Execute Virtual BUY
-            </button>
-          </div>
-        </form>
-      </div>
-
-      <!-- Open Positions Table -->
-      <div style="font-weight:700; font-size:1rem; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span>Active Positions</span>
-          <span class="live-badge-stream"><span class="dot"></span>LIVE TICKING</span>
+        <div style="margin-bottom:16px;">
+          <label style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">CAPITAL PER TRADE (VIRTUAL PAPER MONEY):</label>
+          <input type="text" class="form-input" style="width:100%; margin-top:4px; font-weight:700; color:#00f59b;" value="₹10,000 (Locked by User Mandate)" disabled>
         </div>
-        <div style="display:flex; align-items:center; gap:8px;">
-          <button class="btn btn-sm btn-outline" style="font-size:0.7rem; padding:3px 10px; border-color:#ef4444; color:#ef4444;" onclick="squareOffAllPositionsPrompt()">
-            ⚡ Square Off All (EOD Exit)
-          </button>
-          <span id="market-live-status-sub" style="font-size:0.72rem; color:var(--text-muted); font-family:var(--font-mono);">⚡ Angel Live Stream</span>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table class="custom-table">
-          <thead>
-            <tr>
-              <th>Symbol</th>
-              <th>Side</th>
-              <th>Qty</th>
-              <th>Entry</th>
-              <th>CMP</th>
-              <th>Unrealized P&L</th>
-              <th>SL / TP</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody id="open-positions-tbody">
-            <!-- Populated via JS -->
-          </tbody>
-        </table>
-      </div>
 
-
-      <!-- Today's Trade History (1-Day History - Sleek FinTech Look) -->
-      <div style="margin:16px 0 10px 0; display:flex; justify-content:space-between; align-items:center;">
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span style="font-weight:800; font-size:0.95rem; color:#fff;">📜 Today's Trades (1-Day History)</span>
-          <span class="badge" id="today-trades-count-badge" style="background:rgba(255,255,255,0.08); color:var(--text-muted); font-size:0.7rem; font-weight:700;">0 Trades</span>
-        </div>
-        <div id="today-pnl-summary-pill" style="font-size:0.75rem; font-weight:800; font-family:var(--font-mono); color:#10b981;">
-          ₹0.00 Net
-        </div>
-      </div>
-
-      <!-- Feed of Today's Trades -->
-      <div id="today-trades-list-container">
-        <!-- Rendered dynamically as sleek, modern cards -->
-      </div>
-
-
-    </section>
-
-    <!-- TAB 5: Settings & Custom Watchlists -->
-    <section id="view-settings" class="view-section">
-      <div class="section-title-bar">
-        <h1 class="section-title">⚙️ Settings & Mobile App Setup</h1>
-      </div>
-
-      <!-- Server URL Config for Android APK -->
-      <div class="trade-ticket-card">
-        <div style="font-weight:700; font-size:1rem; margin-bottom:8px; color:var(--color-cyan);">🌐 Bot Backend Connection</div>
-        <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px;">
-          Configure the Backend URL for this Android App:
-        </p>
-        <div style="display:flex; gap:10px; flex-wrap:wrap;">
-          <input type="text" id="server-url-input" placeholder="http://192.168.29.28:8000" style="flex:1; min-width:220px; padding:8px 12px; background:var(--bg-surface); border:1px solid var(--border-color); color:white; border-radius:6px; font-family:var(--font-mono);">
-          <button class="btn btn-primary" onclick="saveServerConfig()">💾 Save & Connect</button>
-        </div>
-      </div>
-
-      <!-- Angel One SmartAPI Integration Card -->
-      <div class="trade-ticket-card">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <div style="font-weight:700; font-size:1rem; color:var(--color-primary);">👼 Angel One SmartAPI (Official NSE Gateway)</div>
-          <span id="angel-status-badge" style="font-size:0.75rem; padding:3px 8px; border-radius:12px; background:rgba(255,255,255,0.08); color:var(--text-muted);">⚪ Not Configured</span>
-        </div>
-        <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px;">
-          Connect your Angel One SmartAPI for official real-time NSE market data and direct tick streaming:
-        </p>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px;">
-          <div>
-            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">SmartAPI Key</label>
-            <input type="text" id="angel-api-key" value="" placeholder="Enter API Key from smartapi portal" style="width:100%; padding:8px; background:var(--bg-surface); border:1px solid var(--border-color); color:white; border-radius:6px; font-family:var(--font-mono); font-size:0.8rem;">
-          </div>
-          <div>
-            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">Client Code (User ID)</label>
-            <input type="text" id="angel-client-code" value="" placeholder="e.g. A123456" style="width:100%; padding:8px; background:var(--bg-surface); border:1px solid var(--border-color); color:white; border-radius:6px; font-family:var(--font-mono); font-size:0.8rem;">
-          </div>
-          <div>
-            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">Login PIN / Password</label>
-            <input type="password" id="angel-password" value="" placeholder="Enter 4-digit MPIN" style="width:100%; padding:8px; background:var(--bg-surface); border:1px solid var(--border-color); color:white; border-radius:6px; font-family:var(--font-mono); font-size:0.8rem;">
-          </div>
-          <div>
-            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">TOTP (Base32 Key or 6-Digit OTP)</label>
-            <input type="text" id="angel-totp" value="" placeholder="Enter Base32 Secret or OTP" style="width:100%; padding:8px; background:var(--bg-surface); border:1px solid var(--border-color); color:white; border-radius:6px; font-family:var(--font-mono); font-size:0.8rem;">
-          </div>
-        </div>
-        <div style="font-size:0.75rem; color:#f59e0b; margin-bottom:10px; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.3); border-radius:6px; padding:8px 10px;">
-          🌐 <strong>SmartAPI Whitelist IP:</strong> For placing real broker orders, Angel One mandates that your current IP (<code style="color:#10b981; font-weight:800;" id="user-detected-ip">Detecting IP...</code>) must be saved in the <strong>Static IP</strong> field of your App on <a href="https://smartapi.angelone.in" target="_blank" style="color:#00e5ff; text-decoration:underline;">smartapi.angelone.in</a>.
-        </div>
-        <div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:10px; background:rgba(0,0,0,0.25); border-radius:6px; padding:6px 10px;">
-          🔒 <strong>Security Notice:</strong> Credentials are sent securely to your backend and never exposed publicly.
-        </div>
-        <button class="btn btn-primary" style="width:100%; font-size:0.85rem;" onclick="saveAngelConfig()">⚡ Authenticate & Connect Angel One</button>
-      </div>
-
-      <!-- Watchlist Management Card -->
-      <div class="trade-ticket-card">
-        <div style="font-weight:700; font-size:1rem; margin-bottom:10px;">Add Custom Indian Stock Symbol</div>
-        <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px;">
-          Add any Indian NSE stock (e.g. <code>BAJFINANCE.NS</code>, <code>WIPRO.NS</code>, <code>MARUTI.NS</code>, <code>TMCV.NS</code>).
-        </p>
-
-        <div style="display:flex; gap:10px; flex-wrap:wrap;">
-          <input type="text" id="new-stock-symbol" placeholder="Symbol (e.g. WIPRO.NS)" style="flex:1; min-width:180px; padding:8px 12px; background:var(--bg-surface); border:1px solid var(--border-color); color:white; border-radius:6px;">
-          <input type="text" id="new-stock-name" placeholder="Company Name (e.g. Wipro Limited)" style="flex:2; min-width:200px; padding:8px 12px; background:var(--bg-surface); border:1px solid var(--border-color); color:white; border-radius:6px;">
-          <button class="btn btn-primary" onclick="addCustomStock()">+ Add to Watchlist</button>
-        </div>
-      </div>
-
-
-      <!-- Android APK Guide Card -->
-      <div class="trade-ticket-card">
-        <div style="font-weight:700; font-size:1rem; margin-bottom:10px; color:var(--color-cyan);">📱 Android App (APK) Installation</div>
-        <div style="font-size:0.85rem; color:var(--text-secondary); line-height:1.6;">
-          <p>You can run this application on your Android phone in two easy ways:</p>
-          <br>
-          <p><strong>Method 1: Instant 1-Tap PWA App on Phone (Zero Setup)</strong></p>
-          <ol style="margin-left:20px; margin-top:4px;">
-            <li>Connect your Android phone and PC to the same Wi-Fi.</li>
-            <li>Find your PC IP address (e.g. <code>192.168.1.X:8000</code>).</li>
-            <li>Open Chrome on your phone, navigate to <code>http://&lt;PC_IP&gt;:8000</code>.</li>
-            <li>Tap Chrome menu (⋮) -> <strong>"Install app"</strong> or <strong>"Add to Home screen"</strong>. It installs as a full standalone app with app icon on your phone!</li>
-          </ol>
-          <br>
-          <p><strong>Method 2: Compile Native Android APK with Capacitor</strong></p>
-          <p>We have included a full <code>android_app</code> project folder with automated scripts to bundle and compile a native <code>.apk</code> file.</p>
-        </div>
+        <button class="btn btn-outline" onclick="saveServerUrl()" style="width:100%; padding:10px; font-weight:800; border-radius:10px;">
+          💾 Save URL Settings
+        </button>
       </div>
     </section>
 
   </main>
 
-  <!-- ========================================================================
-       Mobile Bottom Navigation Bar
-       ======================================================================== -->
-  <nav class="bottom-nav">
-    <button class="nav-item nav-btn active" data-tab="screener">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/></svg>
-      <span>Screener</span>
-    </button>
-    <button class="nav-item nav-btn" data-tab="chart">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 9l-5 5-4-4-6 6"/></svg>
-      <span>15m Chart</span>
-    </button>
-    <button class="nav-item nav-btn" data-tab="news">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6Z"/></svg>
-      <span>News</span>
-    </button>
-    <button class="nav-item nav-btn" data-tab="trading" id="bottom-tab-trading">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="14" x="2" y="7" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
-      <span id="bottom-tab-trading-label">Paper Trade</span>
-    </button>
-    <button class="nav-item nav-btn" data-tab="settings">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-      <span>Settings</span>
-    </button>
-  </nav>
-
-  <!-- Interactive AI Confidence Scorecard Modal (5-Pillar Deep Breakdown) -->
-  <div id="confidence-scorecard-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-stock-title" style="display:none;" onclick="if(event.target === this) closeConfidenceScorecard()">
-    <div class="scorecard-modal-content">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:10px;">
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span style="font-size:1.3rem;">🧠</span>
-          <div>
-            <div style="font-weight:800; font-size:1rem; color:#fff;" id="modal-stock-title">Stock AI Confidence Scorecard</div>
-            <div style="font-size:0.75rem; color:var(--text-muted);">5-Pillar Quantitative Factor Analysis</div>
-          </div>
-        </div>
-        <button onclick="closeConfidenceScorecard()" aria-label="Close Confidence Scorecard" style="background:none; border:none; color:var(--text-muted); font-size:1.3rem; cursor:pointer; line-height:1;">✕</button>
-      </div>
-
-      <!-- Top Score Header Card -->
-      <div style="background:linear-gradient(135deg, rgba(0,229,255,0.15) 0%, rgba(0,245,155,0.08) 100%); border:1px solid rgba(0,229,255,0.3); border-radius:12px; padding:12px 16px; display:flex; justify-content:space-between; align-items:center;">
-        <div>
-          <div style="font-size:0.75rem; color:var(--text-muted);">AI Action & Confidence</div>
-          <div style="display:flex; align-items:baseline; gap:8px; margin-top:2px;">
-            <span id="modal-action-badge" class="badge badge-strong-buy" style="font-size:0.85rem; font-weight:800;">STRONG BUY</span>
-            <span id="modal-confidence-num" style="font-size:1.5rem; font-weight:900; font-family:var(--font-mono); color:#00e5ff;">87%</span>
-          </div>
-        </div>
-        <div style="text-align:right;">
-          <div style="font-size:0.72rem; color:var(--text-muted);">Confluence Score</div>
-          <div id="modal-composite-score" style="font-size:1.25rem; font-weight:800; font-family:var(--font-mono); color:#00f59b;">+74.5</div>
-        </div>
-      </div>
-
-      <!-- 5-Pillar Meters Container -->
-      <div id="modal-pillars-container" style="display:flex; flex-direction:column; gap:8px;">
-        <!-- Populated via JS -->
-      </div>
-
-      <!-- Reasoning Bullet Points -->
-      <div>
-        <div style="font-size:0.78rem; font-weight:700; color:var(--text-muted); margin-bottom:6px;">Algorithmic Confluence Rationale:</div>
-        <div id="modal-reasons-list" style="background:rgba(15,23,42,0.6); border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:10px 12px; font-size:0.75rem; line-height:1.4; color:#cbd5e1; display:flex; flex-direction:column; gap:6px;">
-          <!-- Populated via JS -->
-        </div>
-      </div>
-
-      <!-- Footer CTA Button -->
-      <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid rgba(255,255,255,0.08); padding-top:12px; margin-top:4px;">
-        <span style="font-size:0.75rem; color:var(--text-muted);">Risk Guard & Stop-Loss protection active</span>
-        <button id="modal-trade-btn" class="btn btn-bullish btn-sm" style="font-weight:700; padding:6px 14px;" onclick="executeFromScorecard()">
-          ⚡ Quick Trade with this Setup
-        </button>
-      </div>
-    </div>
+  <!-- Notification Toast -->
+  <div id="toast-container" style="position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:99999; display:none; background:rgba(15, 23, 42, 0.95); border:1px solid #00f59b; color:#ffffff; padding:10px 20px; border-radius:30px; font-size:0.82rem; font-weight:700; box-shadow:0 8px 30px rgba(0, 0, 0, 0.6);">
+    Notification
   </div>
 
-  <!-- Full-Page Interactive AI Trade Setups & Execution Screen -->
-  <div id="ai-trade-approval-modal" class="fullpage-trade-modal" role="dialog" aria-modal="true" aria-labelledby="approval-modal-title" style="display:none;">
-    <!-- Top Header Bar (Sticky) -->
-    <div class="fullpage-modal-header">
-      <div style="display:flex; align-items:center; gap:12px;">
-        <button class="btn btn-outline btn-sm" aria-label="Close AI Trade Approval" style="padding:4px 10px; font-size:0.85rem; border-color:rgba(255,255,255,0.2); border-radius:8px;" onclick="closeAiTradeApprovalModal()">
-          ✕ Close
-        </button>
-        <div>
-          <div style="font-weight:800; font-size:1.05rem; color:#fff; display:flex; align-items:center; gap:8px;">
-            <span id="approval-modal-title">⚡ AI Trade Setups</span>
-            <span class="badge" id="approval-modal-candidate-count" style="background:#00e5ff; color:#022c22; font-weight:800; font-size:0.72rem; padding:2px 7px;">0</span>
-          </div>
-          <div style="font-size:0.72rem; color:var(--text-muted); display:none;" id="approval-modal-subtitle">Review AI setups</div>
-        </div>
-      </div>
-
-      <!-- Quick Margin & Engine Status Pill -->
-      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-        <div style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:4px 10px; font-size:0.75rem; display:flex; align-items:center; gap:6px;">
-          <span style="color:var(--text-muted);" id="approval-cash-label">Margin:</span>
-          <strong class="text-cyan" id="approval-modal-cash">₹1,00,000</strong>
-          <span id="approval-modal-buying-power-badge" style="color:#10b981; font-weight:700; margin-left:4px;">(5x MIS)</span>
-        </div>
-        <div id="modal-engine-badge" style="font-size:0.7rem; padding:3px 8px; border-radius:8px; font-weight:700;"></div>
-      </div>
-    </div>
-
-    <!-- Scrollable Body with Clean Candidate Cards -->
-    <div class="fullpage-modal-body" id="approval-candidates-list">
-      <!-- Populated dynamically via JS with sleek, high-contrast cards -->
-    </div>
-
-    <!-- Bottom Action Footer (Sticky) -->
-    <div class="fullpage-modal-footer">
-      <button class="btn btn-outline" style="padding:10px 16px; font-size:0.85rem; font-weight:700;" onclick="closeAiTradeApprovalModal()">
-        ✕ Cancel
-      </button>
-      <button class="btn btn-bullish" id="modal-approve-all-btn" style="padding:10px 22px; font-size:0.9rem; font-weight:800; box-shadow:0 0 16px rgba(16,185,129,0.35);" onclick="approveAllCandidateTrades()">
-        ⚡ Execute All Orders (5x MIS)
-      </button>
-    </div>
-  </div>
-
-  <!-- Modal: Level 2 Market Depth & Institutional Whale Tracker -->
-  <div id="whale-depth-modal" class="fullpage-trade-modal" role="dialog" aria-modal="true" aria-labelledby="depth-modal-title" style="display:none;">
-    <div class="fullpage-modal-header">
-      <div style="display:flex; align-items:center; gap:12px;">
-        <button class="btn btn-outline btn-sm" aria-label="Close Whale Order Book" style="padding:4px 10px; font-size:0.85rem; border-color:rgba(255,255,255,0.2); border-radius:8px;" onclick="closeWhaleDepthModal()">
-          ✕ Close
-        </button>
-        <div>
-          <div style="font-weight:800; font-size:1.05rem; color:#fff; display:flex; align-items:center; gap:8px;">
-            <span id="depth-modal-title">🌊 Whale Order Book</span>
-            <span class="badge" id="depth-modal-symbol-badge" style="background:#00e5ff; color:#022c22; font-weight:800; font-size:0.75rem;">RELIANCE</span>
-          </div>
-          <div style="font-size:0.72rem; color:var(--text-muted);" id="depth-modal-feed-time">Angel One Direct Tick Stream</div>
-        </div>
-      </div>
-      <div style="display:flex; align-items:center; gap:8px;">
-        <span id="depth-modal-price" style="font-weight:800; font-size:1.15rem; color:#fff;">₹0.00</span>
-        <span id="depth-modal-pct" class="badge" style="font-size:0.75rem;">0.00%</span>
-      </div>
-    </div>
-
-    <div class="fullpage-modal-body" style="padding:16px; max-width:650px; margin:0 auto;">
-      <!-- Whale Sentiment Banner -->
-      <div id="depth-whale-card" style="background:linear-gradient(135deg, rgba(6,182,212,0.12), rgba(16,185,129,0.08)); border:1px solid rgba(0,229,255,0.3); border-radius:12px; padding:12px; margin-bottom:14px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <span style="font-weight:800; font-size:0.9rem;" id="depth-whale-badge">🐋 Whale Analysis Loading...</span>
-          <span style="font-size:0.7rem; color:var(--text-muted);">NSE Institutional Flow</span>
-        </div>
-
-        <!-- Buy vs Sell Volume Bar -->
-        <div style="display:flex; justify-content:space-between; font-size:0.75rem; margin-bottom:4px; font-weight:700;">
-          <span style="color:#10b981;">Bids (Buyers): <strong id="depth-buy-vol">0</strong> (<span id="depth-buy-pct">50%</span>)</span>
-          <span style="color:#ef4444;">Asks (Sellers): <strong id="depth-sell-vol">0</strong> (<span id="depth-sell-pct">50%</span>)</span>
-        </div>
-        <div style="height:10px; width:100%; background:rgba(255,255,255,0.1); border-radius:6px; overflow:hidden; display:flex;">
-          <div id="depth-bar-buy" style="height:100%; width:50%; background:#10b981; transition:width 0.3s ease;"></div>
-          <div id="depth-bar-sell" style="height:100%; width:50%; background:#ef4444; transition:width 0.3s ease;"></div>
-        </div>
-      </div>
-
-      <!-- Level 2 Depth Table (5 Bids vs 5 Asks) -->
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px;">
-        <!-- Buy Bids Column -->
-        <div style="background:rgba(16,185,129,0.04); border:1px solid rgba(16,185,129,0.2); border-radius:10px; padding:10px;">
-          <div style="font-size:0.78rem; font-weight:800; color:#10b981; margin-bottom:6px; display:flex; justify-content:space-between;">
-            <span>🟢 5 Best Bids (Buy)</span>
-            <span>Qty / Orders</span>
-          </div>
-          <table style="width:100%; font-size:0.75rem; border-collapse:collapse;">
-            <tbody id="depth-bids-tbody">
-              <!-- Populated by JS -->
-            </tbody>
-          </table>
-        </div>
-
-        <!-- Sell Asks Column -->
-        <div style="background:rgba(239,68,68,0.04); border:1px solid rgba(239,68,68,0.2); border-radius:10px; padding:10px;">
-          <div style="font-size:0.78rem; font-weight:800; color:#ef4444; margin-bottom:6px; display:flex; justify-content:space-between;">
-            <span>🔴 5 Best Asks (Sell)</span>
-            <span>Qty / Orders</span>
-          </div>
-          <table style="width:100%; font-size:0.75rem; border-collapse:collapse;">
-            <tbody id="depth-asks-tbody">
-              <!-- Populated by JS -->
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Big Institutional Wall Callout -->
-      <div id="depth-wall-alert" style="display:none; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); border-radius:8px; padding:8px 12px; font-size:0.75rem; color:#f59e0b; margin-bottom:14px; font-weight:700;">
-        ⚠️ Big Institutional Wall Detected in Order Book!
-      </div>
-
-      <!-- Quick Action Buttons -->
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-        <button class="btn btn-bullish" onclick="quickTradeFromDepth('BUY')" style="padding:10px; font-weight:800; font-size:0.88rem;">
-          ⚡ Instant BUY with 5x MIS
-        </button>
-        <button class="btn btn-bearish" onclick="quickTradeFromDepth('SELL')" style="padding:10px; font-weight:800; font-size:0.88rem;">
-          ⚡ Instant SHORT with 5x MIS
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Toast Container -->
-  <div class="toast-container" id="toast-container"></div>
-
-  <!-- Scripts -->
-  <script src="js/charts.js" defer></script>
-  <script src="js/app.js" defer></script>
+  <script src="js/app.js"></script>
 </body>
 </html>
-

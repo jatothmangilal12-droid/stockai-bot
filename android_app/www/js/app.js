@@ -1,25 +1,17 @@
 /**
- * StockAI Main Frontend Controller - 100% Indian Market Focus (NSE / BSE)
- * Real-Time NSE Candlesticks, Autonomous AI Auto-Trader, and Win/Loss Analytics.
+ * Angel One Research Auto-Trader AI - Frontend Engine
+ * Specialized 100% for Angel One Analyst Research Calls & Instant ₹10,000 Paper Trades.
  */
 
-// Dynamic Server URL: Detects whether running inside native Android APK or browser
 function getApiBase() {
   let saved = localStorage.getItem('stockai_server_url');
   if (saved) {
     saved = saved.trim().replace(/\/+$/, '');
-    // If user mistakenly entered their public Internet IP (49.x.x.x) into Server URL, fallback safely
-    if (saved.includes('49.43.') || saved.includes('49.')) {
-      console.warn('Public Internet IP detected in Server URL. Falling back to local LAN.');
-      return 'http://192.168.29.28:8000';
-    }
     if (!saved.startsWith('http://') && !saved.startsWith('https://')) {
       saved = 'http://' + saved;
     }
     return saved;
   }
-
-  // If running inside Capacitor / Android Webview
   if (window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && !window.location.port)) {
     return 'http://192.168.29.28:8000';
   }
@@ -27,4794 +19,590 @@ function getApiBase() {
 }
 
 const API_BASE = getApiBase();
-const INTRADAY_LEVERAGE = 5; // 5X Intraday (MIS) Leverage for NSE Equities (20% Upfront Margin Required)
+let currentCategory = 'Intraday';
+let showPastCalls = false;
+let pollingTimer = null;
+let isConnected = false;
 
-function escapeHtml(str) {
-  if (typeof str !== 'string') return str === undefined || str === null ? '' : String(str);
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function safeUrl(url) {
-  if (!url || typeof url !== 'string') return '#';
-  const clean = url.trim().toLowerCase();
-  if (clean.startsWith('javascript:') || clean.startsWith('data:') || clean.startsWith('vbscript:')) {
-    return '#';
+// Fallback Angel One Calls (Displayed immediately even before backend responds)
+const FALLBACK_CALLS = [
+  {
+    call_id: "CALL_ETERNAL_001",
+    symbol: "ETERNAL",
+    company_name: "Zomato / Eternal Ltd",
+    call_type: "Analyst call",
+    category: "Intraday",
+    action: "BUY",
+    entry_price: 326.30,
+    stop_loss: 323.00,
+    target_price: 331.50,
+    current_price: 326.85,
+    potential_pct: 1.42,
+    achieved_pct: 0.17,
+    status: "ACTIVE",
+    quantity: 30
+  },
+  {
+    call_id: "CALL_PRESTIGE_002",
+    symbol: "PRESTIGE",
+    company_name: "Prestige Estates Projects Ltd",
+    call_type: "Analyst call",
+    category: "Intraday",
+    action: "BUY",
+    entry_price: 1395.00,
+    stop_loss: 1380.00,
+    target_price: 1410.00,
+    current_price: 1398.90,
+    potential_pct: 0.79,
+    achieved_pct: 0.42,
+    status: "TARGET_ACHIEVED",
+    quantity: 7
+  },
+  {
+    call_id: "CALL_KAYNES_003",
+    symbol: "KAYNES",
+    company_name: "Kaynes Technology India Ltd",
+    call_type: "Analyst call",
+    category: "Intraday",
+    action: "BUY",
+    entry_price: 3125.00,
+    stop_loss: 3080.00,
+    target_price: 3165.00,
+    current_price: 3160.50,
+    potential_pct: 0.14,
+    achieved_pct: 1.19,
+    status: "TARGET_ACHIEVED",
+    quantity: 3
   }
-  return url;
-}
-
-const state = {
-  activeTab: 'screener',
-  currentSymbol: 'HDFCBANK.NS',
-  watchlist: [],
-  screenerData: [],
-  screenerCategory: 'ALL',
-  screenerOffset: 0,
-  currentAnalysis: null,
-  portfolio: null,
-  chartRenderer: null,
-  orderSide: 'BUY',
-  ws: null,
-  latestLivePrices: {},
-  aiTradeMode: localStorage.getItem('stockai_trade_mode') || 'APPROVAL',
-  pendingApprovalTrades: [],
-  executionMode: localStorage.getItem('stockai_execution_mode') || 'PAPER',
-  excludeDematHoldings: localStorage.getItem('stockai_exclude_demat') !== 'false',
-  dematHoldings: []
-};
-
-function parseUtcDate(str) {
-  if (!str) return new Date();
-  if (typeof str === 'number') return new Date(str);
-  let s = String(str).trim();
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) {
-    s = s.replace(' ', 'T') + 'Z';
-  }
-  const d = new Date(s);
-  return isNaN(d.getTime()) ? new Date() : d;
-}
-
-// Indian Standard Time (IST) Market Session & Time-of-Day Adaptive Engine
-function getMarketSessionInfo() {
-  const istStr = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Kolkata',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  }).format(new Date());
-  const [hours, minutes] = istStr.split(':').map(Number);
-  const totalMinutes = (hours || 0) * 60 + (minutes || 0);
-  const dayName = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', weekday: 'short' }).format(new Date());
-  const isWeekend = dayName === 'Sat' || dayName === 'Sun';
-
-  // Indian Stock Market (NSE/BSE): 09:15 to 15:30 IST
-  if (isWeekend || totalMinutes < 555 || totalMinutes >= 930) {
-    return {
-      session: 'OFF_MARKET',
-      label: '🌙 Market Closed / Next-Day Setup',
-      badgeClass: 'badge-neutral',
-      tpMultiplier: 1.0,
-      slMultiplier: 1.0,
-      isLastHour: false,
-      isCutoff: false,
-      timeStr: `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} IST`,
-      description: 'Standard swing / overnight parameters active'
-    };
-  }
-
-  if (totalMinutes >= 555 && totalMinutes < 690) { // 09:15 - 11:30
-    return {
-      session: 'MORNING_MOMENTUM',
-      label: '🚀 Morning Momentum (Full Targets)',
-      badgeClass: 'badge-buy',
-      tpMultiplier: 1.0,
-      slMultiplier: 1.0,
-      isLastHour: false,
-      isCutoff: false,
-      timeStr: `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} IST`,
-      description: 'Full day remaining; setting expanded 2.1% - 2.8% targets'
-    };
-  } else if (totalMinutes >= 690 && totalMinutes < 840) { // 11:30 - 14:00
-    return {
-      session: 'MIDDAY_BALANCED',
-      label: '⚖️ Mid-Day Session',
-      badgeClass: 'badge-neutral',
-      tpMultiplier: 0.85,
-      slMultiplier: 0.90,
-      isLastHour: false,
-      isCutoff: false,
-      timeStr: `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} IST`,
-      description: 'Balanced session; targets adjusted to 1.6% - 2.2%'
-    };
-  } else if (totalMinutes >= 840 && totalMinutes < 900) { // 14:00 - 15:00 (Last Hour)
-    return {
-      session: 'POWER_HOUR_SCALP',
-      label: '⏱️ Power Hour (Last-Hour Scalp Mode)',
-      badgeClass: 'badge-warning',
-      tpMultiplier: 0.45, // Compress target to 0.8% - 1.1%
-      slMultiplier: 0.65, // Tighten SL to 0.6% - 0.9%
-      isLastHour: true,
-      isCutoff: false,
-      timeStr: `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} IST`,
-      description: 'Last hour before close! Compressed targets (0.8% - 1.1%) for fast EOD profit booking'
-    };
-  } else { // 15:00 - 15:30
-    return {
-      session: 'EOD_SQUAREOFF',
-      label: '🚨 EOD Square-Off Window (3:15 Cutoff)',
-      badgeClass: 'badge-sell',
-      tpMultiplier: 0.35,
-      slMultiplier: 0.50,
-      isLastHour: true,
-      isCutoff: true,
-      timeStr: `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} IST`,
-      description: 'Market closes soon! Ultra-fast scalp (0.5% - 0.7%) or BTST delivery only'
-    };
-  }
-}
-
-function updateMarketSessionUI() {
-  const pill = document.getElementById('market-session-pill');
-  if (!pill) return;
-  const s = getMarketSessionInfo();
-  if (s.session === 'OFF_MARKET') {
-    pill.textContent = '🔴 Market Closed (NSE 09:15 - 15:30 IST)';
-    pill.style.background = 'rgba(239, 68, 68, 0.15)';
-    pill.style.color = '#ef4444';
-    pill.style.borderColor = 'rgba(239, 68, 68, 0.4)';
-    return;
-  }
-  pill.textContent = s.label;
-  if (s.isLastHour) {
-    pill.style.background = 'rgba(245,158,11,0.2)';
-    pill.style.color = '#f59e0b';
-    pill.style.borderColor = 'rgba(245,158,11,0.5)';
-  } else if (s.session === 'MORNING_MOMENTUM') {
-    pill.style.background = 'rgba(16,185,129,0.2)';
-    pill.style.color = '#10b981';
-    pill.style.borderColor = 'rgba(16,185,129,0.5)';
-  } else {
-    pill.style.background = 'rgba(56,189,248,0.15)';
-    pill.style.color = '#38bdf8';
-    pill.style.borderColor = 'rgba(56,189,248,0.3)';
-  }
-}
-
-// Stock-Specific Daily ATR (Average True Range) & Real Volatility Engine
-// A pro AI never assigns identical targets: Giant mega-caps move 0.8%-1.2%, High-beta midcaps move 3%-5%!
-const STOCK_ATR_PROFILES = {
-  // Heavy Mega-Caps (0.8% - 1.3% daily range -> Tight realistic intraday targets)
-  "RELIANCE":   { atrPct: 0.010, targetPct: 0.009,  slPct: 0.0055, name: "Reliance Industries", type: "MEGA_CAP" },
-  "TCS":        { atrPct: 0.011, targetPct: 0.0095, slPct: 0.0060, name: "Tata Consultancy Services", type: "MEGA_CAP" },
-  "HDFCBANK":   { atrPct: 0.012, targetPct: 0.010,  slPct: 0.0060, name: "HDFC Bank", type: "MEGA_CAP" },
-  "ICICIBANK":  { atrPct: 0.013, targetPct: 0.011,  slPct: 0.0065, name: "ICICI Bank", type: "MEGA_CAP" },
-  "INFY":       { atrPct: 0.014, targetPct: 0.012,  slPct: 0.0070, name: "Infosys", type: "MEGA_CAP" },
-  "ITC":        { atrPct: 0.009, targetPct: 0.008,  slPct: 0.0050, name: "ITC Ltd", type: "MEGA_CAP" },
-  "LT":         { atrPct: 0.013, targetPct: 0.011,  slPct: 0.0065, name: "Larsen & Toubro", type: "MEGA_CAP" },
-  "KOTAKBANK":  { atrPct: 0.012, targetPct: 0.010,  slPct: 0.0060, name: "Kotak Mahindra Bank", type: "MEGA_CAP" },
-  "AXISBANK":   { atrPct: 0.014, targetPct: 0.012,  slPct: 0.0070, name: "Axis Bank", type: "MEGA_CAP" },
-  "BHARTIARTL": { atrPct: 0.012, targetPct: 0.010,  slPct: 0.0060, name: "Bharti Airtel", type: "MEGA_CAP" },
-  "MARUTI":     { atrPct: 0.013, targetPct: 0.011,  slPct: 0.0065, name: "Maruti Suzuki", type: "MEGA_CAP" },
-
-  // Midcaps & Volume Movers (1.5% - 2.2% daily range)
-  "SBIN":       { atrPct: 0.016, targetPct: 0.014,  slPct: 0.0085, name: "State Bank of India", type: "MID_BETA" },
-  "TMCV":       { atrPct: 0.022, targetPct: 0.019,  slPct: 0.0110, name: "Tata Motors CV", type: "MID_BETA" },
-  "TMPV":       { atrPct: 0.024, targetPct: 0.020,  slPct: 0.0120, name: "Tata Motors PV", type: "MID_BETA" },
-  "BAJFINANCE": { atrPct: 0.018, targetPct: 0.015,  slPct: 0.0090, name: "Bajaj Finance", type: "MID_BETA" },
-  "WIPRO":      { atrPct: 0.015, targetPct: 0.013,  slPct: 0.0080, name: "Wipro", type: "MID_BETA" },
-
-  // High-Beta Momentum Leaders (2.5% - 4.5% daily range -> High expansion room)
-  "ZOMATO":     { atrPct: 0.034, targetPct: 0.028,  slPct: 0.0160, name: "Zomato Ltd", type: "HIGH_BETA" },
-  "TRENT":      { atrPct: 0.030, targetPct: 0.026,  slPct: 0.0150, name: "Trent Ltd", type: "HIGH_BETA" },
-  "SUZLON":     { atrPct: 0.040, targetPct: 0.032,  slPct: 0.0180, name: "Suzlon Energy", type: "HIGH_BETA" },
-  "HAL":        { atrPct: 0.026, targetPct: 0.022,  slPct: 0.0130, name: "Hindustan Aeronautics", type: "HIGH_BETA" },
-  "BEL":        { atrPct: 0.024, targetPct: 0.020,  slPct: 0.0120, name: "Bharat Electronics", type: "HIGH_BETA" },
-  "TATAPOWER":  { atrPct: 0.027, targetPct: 0.023,  slPct: 0.0130, name: "Tata Power", type: "HIGH_BETA" },
-  "DIXON":      { atrPct: 0.032, targetPct: 0.027,  slPct: 0.0150, name: "Dixon Technologies", type: "HIGH_BETA" }
-};
-
-// Stock-Specific Adaptive SL & TP Engine
-function getStockVolatilityParameters(symbol, cmp, usedPct = 0, isDelivery = false) {
-  const cleanSym = (symbol || '').toUpperCase().replace('.NS', '').replace('^', '');
-  const profile = STOCK_ATR_PROFILES[cleanSym];
-
-  let slPct, tp1Pct, tp2Pct;
-  if (profile) {
-    tp1Pct = profile.targetPct;
-    tp2Pct = profile.targetPct * 1.6;
-    slPct = profile.slPct;
-  } else {
-    // Default fallback based on price range
-    if (cmp > 3000) {
-      tp1Pct = 0.012; slPct = 0.007; tp2Pct = 0.020;
-    } else if (cmp < 200) {
-      tp1Pct = 0.030; slPct = 0.018; tp2Pct = 0.045;
-    } else {
-      tp1Pct = 0.016; slPct = 0.010; tp2Pct = 0.026;
-    }
-  }
-
-  // If Delivery / Swing Trading (CNC), expand targets 2.5x for multi-day technical moves!
-  if (isDelivery) {
-    tp1Pct = Math.round(tp1Pct * 2.5 * 1000) / 1000;
-    tp2Pct = Math.round(tp2Pct * 2.5 * 1000) / 1000;
-    slPct = Math.round(slPct * 2.0 * 1000) / 1000;
-    return { slPct, tp1Pct, tp2Pct, profile, isDelivery: true };
-  }
-
-  // Intraday (MIS) Time-of-Day Adaptive Target Scaling (Market Close Awareness)
-  const sessionInfo = getMarketSessionInfo();
-  tp1Pct = Math.round(tp1Pct * sessionInfo.tpMultiplier * 1000) / 1000;
-  tp2Pct = Math.round(tp2Pct * sessionInfo.tpMultiplier * 1000) / 1000;
-  slPct = Math.round(slPct * sessionInfo.slMultiplier * 1000) / 1000;
-
-  // Minimum safeguards
-  tp1Pct = Math.max(0.005, tp1Pct);
-  slPct = Math.max(0.0035, slPct);
-
-  // If daily range already partially exhausted, shrink target to prevent buying at peak exhaustion
-  if (usedPct >= 1.8) {
-    tp1Pct = Math.max(slPct * 1.1, tp1Pct * 0.55);
-    tp2Pct = Math.max(tp1Pct * 1.25, tp2Pct * 0.55);
-  }
-
-  return { slPct, tp1Pct, tp2Pct, sessionInfo, profile, isDelivery: false };
-}
-
-// 100% Top Indian Stocks Only (NSE) - Comprehensive 100+ Stock Universe Across Hot Sectors
-const DEFAULT_INDIAN_STOCKS = [
-  // Indices
-  { symbol: "^NSEI", name: "NIFTY 50 Index", sector: "INDEX", price: 22600.00, change_pct: 0.45, currency: "₹", market: "NSE" },
-  { symbol: "^NSEBANK", name: "BANK NIFTY Index", sector: "INDEX", price: 54287.35, change_pct: 0.35, currency: "₹", market: "NSE" },
-
-  // Mega Caps
-  { symbol: "RELIANCE.NS", name: "Reliance Industries", sector: "ENERGY", price: 1200.00, change_pct: 0.85, currency: "₹", market: "NSE" },
-  { symbol: "TCS.NS", name: "Tata Consultancy Services", sector: "IT", price: 2530.00, change_pct: 0.60, currency: "₹", market: "NSE" },
-  { symbol: "HDFCBANK.NS", name: "HDFC Bank", sector: "BANKING", price: 692.80, change_pct: -0.18, currency: "₹", market: "NSE" },
-  { symbol: "ICICIBANK.NS", name: "ICICI Bank", sector: "BANKING", price: 1394.20, change_pct: 1.15, currency: "₹", market: "NSE" },
-  { symbol: "INFY.NS", name: "Infosys", sector: "IT", price: 1153.80, change_pct: -0.30, currency: "₹", market: "NSE" },
-  { symbol: "SBIN.NS", name: "State Bank of India", sector: "BANKING", price: 958.60, change_pct: 0.40, currency: "₹", market: "NSE" },
-  { symbol: "BHARTIARTL.NS", name: "Bharti Airtel", sector: "TELECOM", price: 1892.10, change_pct: 0.95, currency: "₹", market: "NSE" },
-  { symbol: "ITC.NS", name: "ITC Limited", sector: "FMCG", price: 257.90, change_pct: 0.20, currency: "₹", market: "NSE" },
-  { symbol: "LT.NS", name: "Larsen & Toubro", sector: "INFRA", price: 3647.00, change_pct: 0.75, currency: "₹", market: "NSE" },
-  { symbol: "KOTAKBANK.NS", name: "Kotak Mahindra Bank", sector: "BANKING", price: 430.50, change_pct: 0.10, currency: "₹", market: "NSE" },
-  { symbol: "AXISBANK.NS", name: "Axis Bank", sector: "BANKING", price: 1217.50, change_pct: 0.55, currency: "₹", market: "NSE" },
-
-  // Defence & Aerospace (High Buzz)
-  { symbol: "HAL.NS", name: "Hindustan Aeronautics", sector: "DEFENCE", price: 4520.00, change_pct: 2.45, currency: "₹", market: "NSE" },
-  { symbol: "BEL.NS", name: "Bharat Electronics", sector: "DEFENCE", price: 298.50, change_pct: 1.80, currency: "₹", market: "NSE" },
-  { symbol: "MAZDOCK.NS", name: "Mazagon Dock Shipbuilders", sector: "DEFENCE", price: 4210.00, change_pct: 3.10, currency: "₹", market: "NSE" },
-  { symbol: "COCHINSHIP.NS", name: "Cochin Shipyard", sector: "DEFENCE", price: 1540.00, change_pct: 2.20, currency: "₹", market: "NSE" },
-  { symbol: "BDL.NS", name: "Bharat Dynamics", sector: "DEFENCE", price: 1145.00, change_pct: 1.50, currency: "₹", market: "NSE" },
-  { symbol: "DATAPATTNS.NS", name: "Data Patterns", sector: "DEFENCE", price: 2450.00, change_pct: 1.90, currency: "₹", market: "NSE" },
-
-  // Railways & PSU Infra
-  { symbol: "IRFC.NS", name: "Indian Railway Finance Corp", sector: "DEFENCE", price: 158.40, change_pct: 2.60, currency: "₹", market: "NSE" },
-  { symbol: "RVNL.NS", name: "Rail Vikas Nigam Ltd", sector: "DEFENCE", price: 412.00, change_pct: 3.40, currency: "₹", market: "NSE" },
-  { symbol: "IRCON.NS", name: "Ircon International", sector: "DEFENCE", price: 224.50, change_pct: 1.70, currency: "₹", market: "NSE" },
-  { symbol: "RAILTEL.NS", name: "RailTel Corporation", sector: "DEFENCE", price: 388.00, change_pct: 2.10, currency: "₹", market: "NSE" },
-  { symbol: "BHEL.NS", name: "Bharat Heavy Electricals", sector: "DEFENCE", price: 242.00, change_pct: 1.30, currency: "₹", market: "NSE" },
-  { symbol: "NBCC.NS", name: "NBCC India", sector: "DEFENCE", price: 98.50, change_pct: 2.80, currency: "₹", market: "NSE" },
-  { symbol: "ADANIPORTS.NS", name: "Adani Ports", sector: "INFRA", price: 1240.00, change_pct: 0.90, currency: "₹", market: "NSE" },
-
-  // Green Energy, Power & Utilities
-  { symbol: "TATAPOWER.NS", name: "Tata Power", sector: "ENERGY", price: 415.00, change_pct: 1.65, currency: "₹", market: "NSE" },
-  { symbol: "SUZLON.NS", name: "Suzlon Energy", sector: "ENERGY", price: 62.40, change_pct: 3.80, currency: "₹", market: "NSE" },
-  { symbol: "IREDA.NS", name: "Indian Renewable Energy Dev", sector: "ENERGY", price: 198.00, change_pct: 2.90, currency: "₹", market: "NSE" },
-  { symbol: "JSWENERGY.NS", name: "JSW Energy", sector: "ENERGY", price: 590.00, change_pct: 1.40, currency: "₹", market: "NSE" },
-  { symbol: "NTPC.NS", name: "NTPC Limited", sector: "ENERGY", price: 375.00, change_pct: 0.80, currency: "₹", market: "NSE" },
-  { symbol: "POWERGRID.NS", name: "Power Grid Corp", sector: "ENERGY", price: 295.00, change_pct: 0.60, currency: "₹", market: "NSE" },
-  { symbol: "ADANIGREEN.NS", name: "Adani Green Energy", sector: "ENERGY", price: 1420.00, change_pct: 2.10, currency: "₹", market: "NSE" },
-  { symbol: "NHPC.NS", name: "NHPC Limited", sector: "ENERGY", price: 89.50, change_pct: 1.10, currency: "₹", market: "NSE" },
-  { symbol: "SJVN.NS", name: "SJVN Limited", sector: "ENERGY", price: 114.00, change_pct: 1.75, currency: "₹", market: "NSE" },
-
-  // High-Beta Midcaps & Multi-Baggers
-  { symbol: "ZOMATO.NS", name: "Zomato Ltd", sector: "MIDCAP", price: 265.00, change_pct: 2.85, currency: "₹", market: "NSE" },
-  { symbol: "TRENT.NS", name: "Trent Limited", sector: "MIDCAP", price: 6150.00, change_pct: 2.20, currency: "₹", market: "NSE" },
-  { symbol: "DIXON.NS", name: "Dixon Technologies", sector: "MIDCAP", price: 12400.00, change_pct: 3.10, currency: "₹", market: "NSE" },
-  { symbol: "POLYCAB.NS", name: "Polycab India", sector: "MIDCAP", price: 6720.00, change_pct: 1.45, currency: "₹", market: "NSE" },
-  { symbol: "KALYANKJIL.NS", name: "Kalyan Jewellers", sector: "MIDCAP", price: 580.00, change_pct: 2.60, currency: "₹", market: "NSE" },
-  { symbol: "CDSL.NS", name: "Central Depository Services", sector: "MIDCAP", price: 1480.00, change_pct: 2.30, currency: "₹", market: "NSE" },
-  { symbol: "BSE.NS", name: "BSE Limited", sector: "MIDCAP", price: 2450.00, change_pct: 3.50, currency: "₹", market: "NSE" },
-  { symbol: "ANGELONE.NS", name: "Angel One", sector: "MIDCAP", price: 2780.00, change_pct: 1.90, currency: "₹", market: "NSE" },
-  { symbol: "MCX.NS", name: "Multi Commodity Exchange", sector: "MIDCAP", price: 5450.00, change_pct: 2.80, currency: "₹", market: "NSE" },
-  { symbol: "KAYNES.NS", name: "Kaynes Technology", sector: "MIDCAP", price: 5120.00, change_pct: 2.40, currency: "₹", market: "NSE" },
-
-  // Automobile & EV
-  { symbol: "TMCV.NS", name: "Tata Motors CV", sector: "AUTO", price: 396.00, change_pct: 1.20, currency: "₹", market: "NSE" },
-  { symbol: "TMPV.NS", name: "Tata Motors PV", sector: "AUTO", price: 264.60, change_pct: 0.80, currency: "₹", market: "NSE" },
-  { symbol: "MARUTI.NS", name: "Maruti Suzuki", sector: "AUTO", price: 11800.00, change_pct: 1.25, currency: "₹", market: "NSE" },
-  { symbol: "M&M.NS", name: "Mahindra & Mahindra", sector: "AUTO", price: 2890.00, change_pct: 1.60, currency: "₹", market: "NSE" },
-  { symbol: "BAJAJ-AUTO.NS", name: "Bajaj Auto", sector: "AUTO", price: 9240.00, change_pct: 0.90, currency: "₹", market: "NSE" },
-  { symbol: "EICHERMOT.NS", name: "Eicher Motors", sector: "AUTO", price: 4890.00, change_pct: 1.10, currency: "₹", market: "NSE" },
-  { symbol: "HEROMOTOCO.NS", name: "Hero MotoCorp", sector: "AUTO", price: 4720.00, change_pct: 0.70, currency: "₹", market: "NSE" },
-  { symbol: "TVSMOTOR.NS", name: "TVS Motor Company", sector: "AUTO", price: 2480.00, change_pct: 1.35, currency: "₹", market: "NSE" },
-  { symbol: "BHARATFORG.NS", name: "Bharat Forge", sector: "AUTO", price: 1390.00, change_pct: 1.75, currency: "₹", market: "NSE" },
-  { symbol: "EXIDEIND.NS", name: "Exide Industries", sector: "AUTO", price: 465.00, change_pct: 2.10, currency: "₹", market: "NSE" },
-
-  // Banking & Finance
-  { symbol: "BANKBARODA.NS", name: "Bank of Baroda", sector: "BANKING", price: 248.00, change_pct: 1.40, currency: "₹", market: "NSE" },
-  { symbol: "PNB.NS", name: "Punjab National Bank", sector: "BANKING", price: 104.50, change_pct: 1.60, currency: "₹", market: "NSE" },
-  { symbol: "CANBK.NS", name: "Canara Bank", sector: "BANKING", price: 98.20, change_pct: 1.10, currency: "₹", market: "NSE" },
-  { symbol: "UNIONBANK.NS", name: "Union Bank of India", sector: "BANKING", price: 122.00, change_pct: 0.90, currency: "₹", market: "NSE" },
-  { symbol: "BAJFINANCE.NS", name: "Bajaj Finance", sector: "BANKING", price: 6850.00, change_pct: -0.50, currency: "₹", market: "NSE" },
-  { symbol: "JIOFIN.NS", name: "Jio Financial Services", sector: "BANKING", price: 318.00, change_pct: 1.80, currency: "₹", market: "NSE" },
-  { symbol: "RECLTD.NS", name: "REC Limited", sector: "BANKING", price: 540.00, change_pct: 2.10, currency: "₹", market: "NSE" },
-  { symbol: "PFC.NS", name: "Power Finance Corporation", sector: "BANKING", price: 485.00, change_pct: 1.95, currency: "₹", market: "NSE" },
-  { symbol: "SHRIRAMFIN.NS", name: "Shriram Finance", sector: "BANKING", price: 3120.00, change_pct: 1.40, currency: "₹", market: "NSE" },
-  { symbol: "CHOLAFIN.NS", name: "Cholamandalam Investment", sector: "BANKING", price: 1450.00, change_pct: 1.25, currency: "₹", market: "NSE" },
-
-  // Metals & Mining
-  { symbol: "TATASTEEL.NS", name: "Tata Steel", sector: "METALS", price: 148.50, change_pct: -0.80, currency: "₹", market: "NSE" },
-  { symbol: "JSWSTEEL.NS", name: "JSW Steel", sector: "METALS", price: 960.00, change_pct: -0.40, currency: "₹", market: "NSE" },
-  { symbol: "VEDL.NS", name: "Vedanta Limited", sector: "METALS", price: 472.00, change_pct: 2.30, currency: "₹", market: "NSE" },
-  { symbol: "HINDALCO.NS", name: "Hindalco Industries", sector: "METALS", price: 680.00, change_pct: 1.10, currency: "₹", market: "NSE" },
-  { symbol: "COALINDIA.NS", name: "Coal India", sector: "METALS", price: 462.00, change_pct: 0.60, currency: "₹", market: "NSE" },
-  { symbol: "NMDC.NS", name: "NMDC Limited", sector: "METALS", price: 215.00, change_pct: 1.50, currency: "₹", market: "NSE" },
-  { symbol: "NATIONALUM.NS", name: "National Aluminium", sector: "METALS", price: 218.00, change_pct: 2.80, currency: "₹", market: "NSE" },
-  { symbol: "SAIL.NS", name: "Steel Authority of India", sector: "METALS", price: 132.00, change_pct: 0.70, currency: "₹", market: "NSE" },
-
-  // Pharma & Healthcare
-  { symbol: "SUNPHARMA.NS", name: "Sun Pharma", sector: "PHARMA", price: 1820.00, change_pct: 0.90, currency: "₹", market: "NSE" },
-  { symbol: "DRREDDY.NS", name: "Dr Reddy's Laboratories", sector: "PHARMA", price: 6680.00, change_pct: 0.70, currency: "₹", market: "NSE" },
-  { symbol: "CIPLA.NS", name: "Cipla Limited", sector: "PHARMA", price: 1540.00, change_pct: 0.40, currency: "₹", market: "NSE" },
-  { symbol: "LUPIN.NS", name: "Lupin Limited", sector: "PHARMA", price: 2180.00, change_pct: 1.45, currency: "₹", market: "NSE" },
-  { symbol: "APOLLOHOSP.NS", name: "Apollo Hospitals", sector: "PHARMA", price: 7120.00, change_pct: 1.15, currency: "₹", market: "NSE" },
-  { symbol: "MANKIND.NS", name: "Mankind Pharma", sector: "PHARMA", price: 2640.00, change_pct: 1.60, currency: "₹", market: "NSE" },
-
-  // IT & Tech
-  { symbol: "HCLTECH.NS", name: "HCL Technologies", sector: "IT", price: 1820.00, change_pct: 0.80, currency: "₹", market: "NSE" },
-  { symbol: "WIPRO.NS", name: "Wipro Limited", sector: "IT", price: 540.00, change_pct: 0.50, currency: "₹", market: "NSE" },
-  { symbol: "TECHM.NS", name: "Tech Mahindra", sector: "IT", price: 1680.00, change_pct: 1.10, currency: "₹", market: "NSE" },
-  { symbol: "LTIM.NS", name: "LTIMindtree", sector: "IT", price: 6100.00, change_pct: 0.90, currency: "₹", market: "NSE" },
-  { symbol: "PERSISTENT.NS", name: "Persistent Systems", sector: "IT", price: 5420.00, change_pct: 2.10, currency: "₹", market: "NSE" },
-  { symbol: "COFORGE.NS", name: "Coforge Limited", sector: "IT", price: 7650.00, change_pct: 2.40, currency: "₹", market: "NSE" },
-  { symbol: "KPITTECH.NS", name: "KPIT Technologies", sector: "IT", price: 1720.00, change_pct: 1.85, currency: "₹", market: "NSE" },
-  { symbol: "TATAELXSI.NS", name: "Tata Elxsi", sector: "IT", price: 7240.00, change_pct: 0.60, currency: "₹", market: "NSE" }
 ];
 
-
-// Document Ready
-document.addEventListener('DOMContentLoaded', () => {
-  initNavigation();
-  initChart();
-  initTradeTicket();
-  initWebSocket();
-  loadWatchlist();
-  loadScreener();
-  loadSectorHeatmap();
-  loadStockAnalysis(state.currentSymbol);
-  loadPortfolio();
-  loadAiFactorMatrix();
-  updateAiTradeModeUI();
-  updateExecutionModeUI();
-  updateMarketSessionUI();
-  renderAiMistakeLearningHub();
-  initServerConfigUI();
-  loadAngelStatus();
-  fetchAngelDematHoldings();
-  startContinuousLiveMarketEngine();
-
-  // Register Service Worker for PWA (web only)
-  if ('serviceWorker' in navigator && (window.location.protocol === 'http:' || window.location.protocol === 'https:') && window.location.port) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
-  }
-});
-
-// Navigation Handling
-function initNavigation() {
-  const navBtns = document.querySelectorAll('.nav-btn');
-  navBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const target = btn.dataset.tab;
-      switchTab(target);
-    });
-  });
-}
-
-function switchTab(tabId) {
-  state.activeTab = tabId;
-  document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
-  document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
-
-  const viewEl = document.getElementById(`view-${tabId}`);
-  if (viewEl) viewEl.classList.add('active');
-
-  document.querySelectorAll(`.nav-btn[data-tab="${tabId}"]`).forEach(el => el.classList.add('active'));
-
-  if (tabId === 'chart') {
-    if (!state.currentAnalysis) {
-      loadStockAnalysis(state.currentSymbol);
-    } else {
-      setTimeout(() => state.chartRenderer && state.chartRenderer.render(), 60);
-    }
-  } else if (tabId === 'screener') {
-    loadScreener();
-    loadSectorHeatmap();
-  } else if (tabId === 'trading') {
-    loadPortfolio();
-    loadAiFactorMatrix();
-  } else if (tabId === 'news') {
-    loadFlashNews();
-  }
-}
-
-// Chart Initializer
-function initChart() {
-  state.chartRenderer = new StockChartRenderer('candlestick-canvas', 'rsi-canvas');
-}
-
-// =============================================================================
-// Institutional Technical Analysis & Real Indicator Calculation Engine
-// Replaces blind price-chasing (+1% = BUY) with genuine professional analysis:
-// 1. Real mathematical RSI 14 & Intraday VWAP
-// 2. Real EMA 9 & EMA 21 trend structure
-// 3. Anti-FOMO Resistance Shield (NEVER buy at peak exhaustion)
-// 4. Value Pullback Entry (Buy on the dip to VWAP / EMA support, NOT at highs!)
-// =============================================================================
-
-function calculateRealTechnicalIndicators(candles) {
-  if (!candles || candles.length < 5) return candles;
-
-  let cumTPV = 0;
-  let cumVol = 0;
-  const k9 = 2 / (9 + 1);
-  const k21 = 2 / (21 + 1);
-  let ema9 = candles[0].close;
-  let ema21 = candles[0].close;
-  const rsiPeriod = 14;
-  let avgGain = 0;
-  let avgLoss = 0;
-
-  for (let i = 0; i < candles.length; i++) {
-    const c = candles[i];
-    const tp = (c.high + c.low + c.close) / 3;
-    const vol = c.volume > 0 ? c.volume : 1000;
-
-    cumTPV += tp * vol;
-    cumVol += vol;
-    c.vwap = Math.round((cumTPV / cumVol) * 100) / 100;
-
-    if (i === 0) {
-      ema9 = c.close;
-      ema21 = c.close;
-    } else {
-      ema9 = (c.close * k9) + (ema9 * (1 - k9));
-      ema21 = (c.close * k21) + (ema21 * (1 - k21));
-
-      const diff = c.close - candles[i - 1].close;
-      const gain = Math.max(0, diff);
-      const loss = Math.max(0, -diff);
-
-      if (i <= rsiPeriod) {
-        avgGain += gain / rsiPeriod;
-        avgLoss += loss / rsiPeriod;
-      } else {
-        avgGain = ((avgGain * (rsiPeriod - 1)) + gain) / rsiPeriod;
-        avgLoss = ((avgLoss * (rsiPeriod - 1)) + loss) / rsiPeriod;
-      }
-    }
-
-    c.ema_9 = Math.round(ema9 * 100) / 100;
-    c.ema_21 = Math.round(ema21 * 100) / 100;
-
-    if (i < rsiPeriod) {
-      c.rsi = 50;
-    } else {
-      const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-      c.rsi = Math.round((100 - (100 / (1 + rs))) * 10) / 10;
-    }
-  }
-
-  return candles;
-}
-
-function evaluateInstitutionalTradeSetup(symbol, candles, cmp) {
-  if (!candles || candles.length < 6) {
-    return {
-      action: "NEUTRAL",
-      confidence: 50,
-      pattern: "Awaiting Market Data",
-      rationale: "Need at least 6 real 15m candles to compute authentic technical structure."
-    };
-  }
-
-  const latest = candles[candles.length - 1];
-  const prev = candles[candles.length - 2];
-  const rsi = latest.rsi || 50;
-  const ema9 = latest.ema_9 || cmp;
-  const ema21 = latest.ema_21 || cmp;
-  const vwap = latest.vwap || cmp;
-
-  let dayHigh = -Infinity;
-  let dayLow = Infinity;
-  candles.forEach(c => {
-    if (c.high > dayHigh) dayHigh = c.high;
-    if (c.low < dayLow) dayLow = c.low;
-  });
-
-  const distFromHighPct = ((dayHigh - cmp) / cmp) * 100;
-  const body = Math.abs(latest.close - latest.open);
-  const lowerShadow = Math.min(latest.open, latest.close) - latest.low;
-  const upperShadow = latest.high - Math.max(latest.open, latest.close);
-  const isHammer = lowerShadow >= 1.8 * Math.max(0.1, body) && upperShadow <= 0.5 * Math.max(0.1, body);
-  const isShootingStar = upperShadow >= 1.8 * Math.max(0.1, body) && lowerShadow <= 0.5 * Math.max(0.1, body);
-  const isBullishEngulfing = latest.close > latest.open && prev.close < prev.open && latest.close >= prev.open && latest.open <= prev.close;
-
-  // RULE 1: ANTI-FOMO RESISTANCE SHIELD (Never buy at peak exhaustion!)
-  if (distFromHighPct < 0.25 && rsi > 66) {
-    return {
-      action: "NEUTRAL",
-      confidence: 54,
-      pattern: "⚠️ Resistance Exhaustion",
-      rationale: `Price is stretched at day's peak (₹${dayHigh.toFixed(2)}) with RSI at ${rsi.toFixed(1)}. High risk of Bull Trap! Genuine AI rule: Do NOT chase green candles at the top; wait for a pullback to VWAP.`
-    };
-  }
-
-  // RULE 2: INSTITUTIONAL VALUE BUY ENTRY (Dip to VWAP/EMA Support in Uptrend)
-  const isUptrend = ema9 > ema21 && cmp >= (vwap * 0.998);
-  const isNearSupport = Math.abs(cmp - ema21) / cmp < 0.006 || Math.abs(cmp - vwap) / cmp < 0.006;
-  const hasBullishSignal = isHammer || isBullishEngulfing || (latest.close > latest.open && rsi >= 46 && rsi <= 64);
-
-  if (isUptrend && (isNearSupport || hasBullishSignal) && rsi >= 46 && rsi <= 64) {
-    const pat = isHammer ? "Bullish Hammer at Support" : (isBullishEngulfing ? "Bullish Engulfing" : "21 EMA Value Pullback");
-    return {
-      action: "BUY",
-      confidence: 88,
-      pattern: pat,
-      rationale: `Genuine Value Setup: Holding above institutional VWAP (₹${vwap.toFixed(1)}) and 21 EMA support with healthy momentum (RSI ${rsi.toFixed(1)}). Buying the dip on support with controlled risk.`
-    };
-  }
-
-  // RULE 3: INSTITUTIONAL SHORT / SELL ENTRY (Rejection at Resistance in Downtrend)
-  const isDowntrend = ema9 < ema21 && cmp <= (vwap * 1.002);
-  const hasBearishSignal = isShootingStar || (latest.close < latest.open && rsi <= 54 && rsi >= 34);
-
-  if (isDowntrend && hasBearishSignal && rsi <= 54 && rsi >= 34) {
-    const pat = isShootingStar ? "Shooting Star Rejection" : "Bearish Breakdown Below VWAP";
-    return {
-      action: "SELL",
-      confidence: 88,
-      pattern: pat,
-      rationale: `Genuine Breakdown Setup: Trading below VWAP (₹${vwap.toFixed(1)}) with 9 EMA < 21 EMA and sellers rejecting higher levels (RSI ${rsi.toFixed(1)}). High probability downward continuation.`
-    };
-  }
-
-  // RULE 4: CONSOLIDATION / NO-EDGE CHOP ZONE -> STRICTLY STAY NEUTRAL
-  return {
-    action: "NEUTRAL",
-    confidence: 50,
-    pattern: "Consolidation Equilibrium",
-    rationale: `Stock is in balanced consolidation (RSI ${rsi.toFixed(1)}, between ₹${dayLow.toFixed(1)} - ₹${dayHigh.toFixed(1)}). Capital Shield: Big players are not active yet, protecting capital by staying in cash.`
-  };
-}
-
-// =============================================================================
-// Direct Real-Time NSE Data Fetcher (Fallback if PC Backend is not connected)
-// =============================================================================
-async function fetchDirectYahooNSE(symbol) {
-  try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=15m&range=2d`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('Yahoo query failed');
-    const json = await res.json();
-    const result = json.chart.result[0];
-    const meta = result.meta;
-    const timestamps = result.timestamp || [];
-    const quotes = result.indicators.quote[0] || {};
-    const closes = quotes.close || [];
-    const opens = quotes.open || [];
-    const highs = quotes.high || [];
-    const lows = quotes.low || [];
-    const volumes = quotes.volume || [];
-
-    const candles = [];
-    for (let i = 0; i < timestamps.length; i++) {
-      if (closes[i] !== null && opens[i] !== null) {
-        const time = timestamps[i] * 1000;
-        const d = new Date(time);
-        const formatted = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-        const c = Math.round(closes[i] * 100) / 100;
-        const o = Math.round(opens[i] * 100) / 100;
-        const h = Math.round(highs[i] * 100) / 100;
-        const l = Math.round(lows[i] * 100) / 100;
-        candles.push({
-          time,
-          formatted_time: formatted,
-          open: o,
-          high: h,
-          low: l,
-          close: c,
-          volume: volumes[i] || 0
-        });
-      }
-    }
-
-    const calculatedCandles = calculateRealTechnicalIndicators(candles);
-    const cmp = meta.regularMarketPrice || (calculatedCandles.length ? calculatedCandles[calculatedCandles.length - 1].close : 0);
-    const prevClose = meta.chartPreviousClose || cmp;
-    const changePct = prevClose ? Math.round(((cmp - prevClose) / prevClose) * 10000) / 100 : 0.0;
-
-    return {
-      price: cmp,
-      change_pct: changePct,
-      candles: calculatedCandles
-    };
-  } catch (e) {
-    console.warn('Direct NSE query fallback error:', e);
-    return null;
-  }
-}
-
-// Load Watchlist
-async function loadWatchlist() {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500);
-    const res = await fetch(`${API_BASE}/api/stocks`, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (!res.ok) throw new Error('Status not ok');
-    const stocks = await res.json();
-    state.watchlist = stocks;
-    renderTickerRibbon(stocks);
-    populateStockSelectors(stocks);
-    updateConnectionBadge(true);
-  } catch (err) {
-    console.warn('Backend not reached, checking direct NSE quotes...');
-    state.watchlist = DEFAULT_INDIAN_STOCKS;
-    renderTickerRibbon(DEFAULT_INDIAN_STOCKS);
-    populateStockSelectors(DEFAULT_INDIAN_STOCKS);
-    updateConnectionBadge(false);
-
-    // Immediately trigger high-speed quote sync from Angel One SmartAPI
-    syncRealQuotesPeriodically();
-
-    // Asynchronously update real prices for visible tickers directly from NSE
-    setTimeout(async () => {
-      const topSymbols = ['HDFCBANK.NS', 'RELIANCE.NS', 'TCS.NS', 'ICICIBANK.NS', '^NSEI'];
-      for (const sym of topSymbols) {
-        const direct = await fetchDirectYahooNSE(sym);
-        if (direct && direct.price > 0) {
-          const item = state.watchlist.find(s => s.symbol === sym);
-          if (item) {
-            item.price = direct.price;
-            item.change_pct = direct.change_pct;
-          }
-        }
-      }
-      renderTickerRibbon(state.watchlist);
-    }, 500);
-  }
-}
-
-function updateConnectionBadge(isOnline) {
-  const badge = document.querySelector('.live-badge');
-  if (!badge) return;
-  if (isOnline) {
-    badge.innerHTML = `<span class="live-dot"></span><span>15M LIVE</span>`;
-    badge.style.color = 'var(--color-bullish)';
-  } else {
-    badge.innerHTML = `<span class="live-dot" style="background:var(--color-neutral);"></span><span>REAL NSE DIRECT</span>`;
-    badge.style.color = 'var(--color-neutral)';
-  }
-}
-
-function renderTickerRibbon(stocks) {
-  const ribbon = document.getElementById('ticker-ribbon');
-  if (!ribbon) return;
-
-  ribbon.innerHTML = stocks.map(s => {
-    const isPos = s.change_pct >= 0;
-    const colorClass = isPos ? 'text-bullish' : 'text-bearish';
-    const sign = isPos ? '+' : '';
-    const cleanSym = s.symbol.replace('.NS', '').replace('^', '');
-    const cleanKey = s.symbol.replace(/[^a-zA-Z0-9]/g, '');
-    return `
-      <div id="ticker-item-${cleanKey}" class="ticker-item ${s.symbol === state.currentSymbol ? 'active' : ''}" onclick="selectStock('${s.symbol}')">
-        <span class="ticker-symbol">${cleanSym}</span>
-        <span id="ticker-price-${cleanKey}" class="ticker-price">${s.currency || '₹'}${s.price}</span>
-        <span id="ticker-pct-${cleanKey}" class="${colorClass}">${sign}${s.change_pct}%</span>
-      </div>
-    `;
-  }).join('');
-}
-
-function populateStockSelectors(stocks) {
-  const selects = document.querySelectorAll('.stock-select-dropdown');
-  selects.forEach(select => {
-    select.innerHTML = stocks.map(s => `
-      <option value="${s.symbol}" ${s.symbol === state.currentSymbol ? 'selected' : ''}>
-        ${s.name} (${s.symbol})
-      </option>
-    `).join('');
-  });
-}
-
-function selectStock(symbol) {
-  state.currentSymbol = symbol;
-  const match = DEFAULT_INDIAN_STOCKS.find(s => s.symbol === symbol);
-  if (match && !state.watchlist.some(s => s.symbol === symbol)) {
-    state.watchlist.unshift(match);
-  }
-  renderTickerRibbon(state.watchlist);
-  populateStockSelectors(state.watchlist);
-  loadStockAnalysis(symbol);
-  switchTab('chart');
-}
-
-// Sector Rotation & Capital Inflow Heatmap
-async function loadSectorHeatmap() {
-  const textEl = document.getElementById('sector-flow-text');
-  const badgesEl = document.getElementById('sector-badges-container');
-  if (!textEl && !badgesEl) return;
-
-  try {
-    const res = await fetch(`${API_BASE}/api/sectors/heatmap`);
-    if (!res.ok) return;
-    const data = await res.json();
-    if (textEl && data.leading_sector) {
-      textEl.innerHTML = `Leader: <strong style="color:#10b981;">${data.leading_sector}</strong> | Laggard: <strong style="color:#ef4444;">${data.lagging_sector}</strong>`;
-    }
-    if (badgesEl && data.sectors) {
-      badgesEl.innerHTML = data.sectors.slice(0, 5).map(s => {
-        const isPos = s.avg_change_pct >= 0;
-        const color = isPos ? '#10b981' : '#ef4444';
-        const bg = isPos ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)';
-        return `<span class="badge" style="background:${bg}; color:${color}; font-size:0.68rem; border:1px solid ${color}33;">${s.sector} ${isPos ? '+' : ''}${s.avg_change_pct}%</span>`;
-      }).join('');
-    }
-  } catch (err) {
-    if (textEl) textEl.textContent = 'NSE Sector Inflow Active';
-  }
-}
-
-// Category Filtering & Dynamic Batch Pagination
-function filterScreenerCategory(cat, el) {
-  state.screenerCategory = cat;
-  state.screenerOffset = 0;
-  document.querySelectorAll('.cat-pill').forEach(btn => btn.classList.remove('active'));
-  if (el) el.classList.add('active');
-  showToast(`🔍 Scanning ${cat === 'ALL' ? 'All Dalal Street' : cat} stocks...`, 'info');
-  loadScreener();
-}
-
-function scanNextBatchStocks() {
-  state.screenerOffset += 10;
-  showToast('🔄 Scanning next 10 stocks across Dalal Street...', 'info');
-  loadScreener();
-}
-
-// Load Screener with Dynamic Rotation & Hot Sectors
-async function loadScreener() {
-  const grid = document.getElementById('screener-grid');
-  if (!grid) return;
-
-  loadSectorHeatmap();
-
-  // Filter pool based on selected category
-  let pool = DEFAULT_INDIAN_STOCKS;
-  if (state.screenerCategory && state.screenerCategory !== 'ALL') {
-    if (state.screenerCategory === 'LEADERS') {
-      pool = DEFAULT_INDIAN_STOCKS.filter(s => ['AUTO', 'DEFENCE', 'ENERGY', 'MIDCAP'].includes(s.sector));
-    } else {
-      pool = DEFAULT_INDIAN_STOCKS.filter(s => s.sector === state.screenerCategory);
-    }
-    if (!pool.length) pool = DEFAULT_INDIAN_STOCKS;
-  }
-
-  // Get current rotating batch of 10 stocks
-  const offset = state.screenerOffset % pool.length;
-  let batch = pool.slice(offset, offset + 10);
-  if (batch.length < 10 && pool.length >= 10) {
-    batch = batch.concat(pool.slice(0, 10 - batch.length));
-  }
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4500);
-    const res = await fetch(`${API_BASE}/api/screener?sector=${state.screenerCategory}&offset=${state.screenerOffset}`, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (!res.ok) throw new Error('Status not ok');
-    const data = await res.json();
-    if (data && data.length > 0) {
-      state.screenerData = data;
-      renderScreenerCards(data);
-      return;
-    }
-  } catch (err) {
-    console.warn('Backend screener not reached, dynamically generating signals for batch of', batch.length, 'stocks');
-  }
-
-  // Render loading state for current rotating batch
-  grid.innerHTML = `<div style="color:var(--text-muted); padding:20px;">Scanning real NSE 15m signals for ${batch.length} ${state.screenerCategory} stocks...</div>`;
-
-  // Fetch real-time quotes/candles directly for this batch (Parallel)
-  const results = await Promise.all(batch.map(async (s) => {
-    try {
-      const direct = await fetchDirectYahooNSE(s.symbol);
-      const realLtp = state.latestLivePrices && state.latestLivePrices[s.symbol];
-      const cmp = (realLtp && realLtp > 0) ? realLtp : ((direct && direct.price > 0) ? direct.price : s.price);
-      const chg = (direct && typeof direct.change_pct === 'number') ? direct.change_pct : s.change_pct;
-      const candles = (direct && direct.candles) ? direct.candles : [];
-
-      // 1. Institutional Value Setup Evaluation (Real RSI, VWAP, EMA Pullback, Anti-FOMO)
-      const setup = evaluateInstitutionalTradeSetup(s.symbol, candles, cmp);
-      let action = setup.action;
-      let conf = setup.confidence;
-      let patternName = setup.pattern;
-      let isBuy = action.includes('BUY');
-      let isStrong = action.includes('STRONG');
-      let predictiveBadge = setup.pattern.includes('Predictive') || setup.pattern.includes('Divergence') ? setup.pattern : null;
-
-      // 2. Daily Range Exhaustion Check (Prevents buying at peak or shorting at bottom)
-      const usedPct = Math.abs(chg);
-      const isExhausted = usedPct >= 2.0;
-      let exhaustionRatio = Math.min(usedPct / 2.2, 1.5);
-
-      if (isExhausted) {
-        action = "NEUTRAL";
-        conf = 52;
-        patternName = "Range Exhausted (No Trade)";
-      }
-
-      // 3. Dynamic Volatility-Based Targets & Stop Loss (No more rigid 0.6% / 0.9%)
-      const { slPct, tp1Pct, tp2Pct } = getStockVolatilityParameters(s.symbol, cmp, usedPct);
-
-      const target1 = Math.round((cmp * (isBuy ? (1 + tp1Pct) : (1 - tp1Pct))) * 100) / 100;
-      const target2 = Math.round((cmp * (isBuy ? (1 + tp2Pct) : (1 - tp2Pct))) * 100) / 100;
-      const stopLoss = Math.round((cmp * (isBuy ? (1 - slPct) : (1 + slPct))) * 100) / 100;
-      const rrrVal = `1:${(tp1Pct / slPct).toFixed(1)}`;
-
-      const score = Math.round((isBuy ? 1 : -1) * (conf * 0.8));
-
-      return {
-        symbol: s.symbol,
-        name: s.name,
-        sector: s.sector || 'NSE',
-        market: "NSE",
-        currency: "₹",
-        price: cmp,
-        action: action,
-        confidence: conf,
-        confluence_score: score,
-        pattern: patternName,
-        predictive_badge: predictiveBadge,
-        exhaustion_ratio: exhaustionRatio,
-        sentiment_score: isBuy ? 0.42 : -0.28,
-        target_1: target1,
-        target_2: target2,
-        stop_loss: stopLoss,
-        rrr: rrrVal,
-        smart_money: isStrong ? (isBuy ? "Whale Accumulation" : "Institutional Distribution") : "Normal Volume",
-        delivery_spike: isStrong ? "📦 Institutional Delivery Inflow" : "Normal Retail Flow",
-        is_reversal: !!predictiveBadge || Math.abs(chg) >= 2.5,
-        market_regime: isExhausted ? "EXHAUSTED_RANGE" : (isStrong ? "STRONG_TREND" : "NORMAL"),
-        reasons: [
-          `Real NSE Price: ₹${cmp.toFixed(2)} (${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%).`,
-          isExhausted ? `⚠️ Daily range saturated (${usedPct.toFixed(1)}% moved). Mean-reversion risk high.` : `Target 1: ₹${target1} (+${(tp1Pct*100).toFixed(1)}%) | Safe SL: ₹${stopLoss} (-${(slPct*100).toFixed(1)}%).`,
-          predictiveBadge ? `${predictiveBadge}: Institutional early flow confirmed.` : `Pattern: ${patternName} on 15m structure.`
-        ]
-      };
-    } catch(e) {
-      return null;
-    }
-  }));
-
-  const valid = results.filter(r => r !== null);
-  state.screenerData = valid;
-  renderScreenerCards(valid);
-}
-
-function renderScreenerCards(signals) {
-  const grid = document.getElementById('screener-grid');
-  if (!grid) return;
-
-  if (!signals || signals.length === 0) {
-    grid.innerHTML = '<div style="color:var(--text-muted); padding:20px;">Scanning real NSE 15m signals...</div>';
-    return;
-  }
-
-  grid.innerHTML = signals.map(s => {
-    let cardClass = 'card-neutral';
-    let badgeClass = 'badge-neutral';
-    if (s.action === 'STRONG BUY') { cardClass = 'card-strong-buy'; badgeClass = 'badge-strong-buy'; }
-    else if (s.action === 'BUY') { cardClass = 'card-buy'; badgeClass = 'badge-buy'; }
-    else if (s.action === 'STRONG SELL') { cardClass = 'card-strong-sell'; badgeClass = 'badge-strong-sell'; }
-    else if (s.action === 'SELL') { cardClass = 'card-sell'; badgeClass = 'badge-sell'; }
-
-    return `
-      <div class="signal-card ${cardClass}" onclick="selectStock('${s.symbol}')">
-        <div class="card-header">
-          <div>
-            <div class="card-title">${s.name}</div>
-            <div class="card-subtitle">${s.symbol} • NSE 15m Interval</div>
-          </div>
-          <div class="card-price-block">
-            <div class="card-price">${s.currency}${s.price}</div>
-            <span class="badge ${badgeClass}">${s.action}</span>
-          </div>
-        </div>
-
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <span style="font-size:0.75rem; color:var(--text-muted); cursor:pointer;" onclick="event.stopPropagation(); openConfidenceScorecard('${s.symbol}')" title="Tap to inspect 6-pillar scorecard">
-            AI Confluence: <strong style="color:var(--color-cyan); text-decoration:underline dotted;">${s.confidence}% 🔍</strong> (${s.confluence_score > 0 ? '+' : ''}${s.confluence_score})
-          </span>
-          <div style="display:flex; align-items:center; gap:4px;">
-            ${(s.sector === 'AUTO' || s.sector === 'DEFENCE' || s.sector === 'MIDCAP') ? `<span class="badge" style="background:linear-gradient(135deg, #f59e0b, #ef4444); color:#000; font-size:0.62rem; font-weight:800;">👑 LEADER</span>` : ''}
-            ${s.pattern ? `<span class="badge badge-pattern">${s.pattern}</span>` : ''}
-          </div>
-        </div>
-
-        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:5px;">
-          ${s.predictive_badge ? `<span class="badge" style="background:rgba(99,102,241,0.25); color:#a5b4fc; border:1px solid rgba(99,102,241,0.4); font-size:0.65rem; font-weight:700;">${s.predictive_badge}</span>` : ''}
-          ${s.exhaustion_ratio && s.exhaustion_ratio >= 0.75 ? `<span class="badge" style="background:rgba(239,68,68,0.2); color:#fca5a5; font-size:0.65rem;">⚠️ Range Exhausted (${Math.round(s.exhaustion_ratio * 100)}%)</span>` : ''}
-          ${s.smart_money && !s.smart_money.includes('Normal') ? `<span class="badge" style="background:rgba(6,182,212,0.18); color:#06b6d4; font-size:0.65rem;">${s.smart_money}</span>` : ''}
-          ${s.delivery_spike && !s.delivery_spike.includes('Normal') ? `<span class="badge" style="background:rgba(168,85,247,0.2); color:#c084fc; font-size:0.65rem;">${s.delivery_spike}</span>` : ''}
-          ${s.is_reversal ? `<span class="badge" style="background:linear-gradient(135deg, rgba(245,158,11,0.25), rgba(239,68,68,0.25)); color:#f59e0b; font-size:0.65rem; font-weight:700;">🎯 Reversal Sniper</span>` : ''}
-          ${s.market_regime === 'CHOPPY_SIDEWAYS' ? `<span class="badge" style="background:rgba(239,68,68,0.2); color:#ef4444; font-size:0.65rem;">⚠️ Chop Trap</span>` : ''}
-          ${s.market_regime === 'STRONG_TREND' ? `<span class="badge" style="background:rgba(16,185,129,0.2); color:#10b981; font-size:0.65rem;">🚀 High Momentum</span>` : ''}
-        </div>
-
-        <div class="card-metrics-row">
-          <div class="metric-box">
-            <span class="metric-label">Target 1</span>
-            <span class="metric-val text-bullish">${s.currency}${s.target_1}</span>
-          </div>
-          <div class="metric-box">
-            <span class="metric-label">Stop Loss</span>
-            <span class="metric-val text-bearish">${s.currency}${s.stop_loss}</span>
-          </div>
-          <div class="metric-box">
-            <span class="metric-label">Risk/Reward</span>
-            <span class="metric-val text-cyan">${s.rrr}</span>
-          </div>
-        </div>
-
-        <div class="card-actions">
-          <button class="btn btn-outline btn-sm" style="flex:1;" onclick="event.stopPropagation(); selectStock('${s.symbol}')">
-            📊 View Chart
-          </button>
-          <button class="btn ${s.action.includes('BUY') ? 'btn-bullish' : 'btn-bearish'} btn-sm" style="flex:1;" onclick="event.stopPropagation(); quickTradePrompt('${s.symbol}', '${s.action.includes('SELL') ? 'SELL' : 'BUY'}', ${s.price}, ${s.stop_loss}, ${s.target_1})">
-            ⚡ Quick Trade
-          </button>
-        </div>
-      </div>
-    `;
-  }).join('');
-}
-
-// Load Full Analysis for Selected Stock
-async function loadStockAnalysis(symbol) {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4500);
-    const res = await fetch(`${API_BASE}/api/stock/${symbol}/analysis`, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (!res.ok) throw new Error('Analysis fetch failed');
-    const data = await res.json();
-    state.currentAnalysis = data;
-    renderAnalysisData(data);
-  } catch (err) {
-    console.warn('Backend analysis not reached, fetching real NSE direct candles for', symbol);
-    const direct = await fetchDirectYahooNSE(symbol);
-    const match = state.watchlist.find(s => s.symbol === symbol) || DEFAULT_INDIAN_STOCKS[0];
-    const price = (direct && direct.price > 0) ? direct.price : match.price;
-    const candles = (direct && direct.candles && direct.candles.length > 5) ? direct.candles : getSampleCandles(price);
-    const chg = (direct && typeof direct.change_pct === 'number') ? direct.change_pct : match.change_pct;
-
-    // 1. Institutional Value Setup Evaluation (Real RSI, VWAP, EMA Pullback, Anti-FOMO)
-    const setup = evaluateInstitutionalTradeSetup(symbol, candles, price);
-    let action = setup.action;
-    let conf = setup.confidence;
-    let patternName = setup.pattern;
-    let isBuy = action.includes('BUY');
-    let isStrong = action.includes('STRONG');
-    let predictiveNote = setup.pattern.includes('Predictive') || setup.pattern.includes('Divergence') ? setup.rationale : null;
-
-    // 2. Daily Range Exhaustion Shield (Eliminates impossible 5% - 10% targets)
-    const usedPct = Math.abs(chg);
-    const isExhausted = usedPct >= 2.0;
-    if (isExhausted) {
-      action = "NEUTRAL";
-      conf = 52;
-      patternName = "Range Exhausted (No Trade)";
-    }
-
-    // 3. Dynamic Volatility-Based Targets & Stop Loss (No more rigid 0.6% / 0.9%)
-    const { slPct, tp1Pct, tp2Pct } = getStockVolatilityParameters(symbol, price, usedPct);
-
-    const target1 = Math.round((price * (isBuy ? (1 + tp1Pct) : (1 - tp1Pct))) * 100) / 100;
-    const target2 = Math.round((price * (isBuy ? (1 + tp2Pct) : (1 - tp2Pct))) * 100) / 100;
-    const stopLoss = Math.round((price * (isBuy ? (1 - slPct) : (1 + slPct))) * 100) / 100;
-    const rrrVal = `1:${(tp1Pct / slPct).toFixed(1)}`;
-
-    const analysisObj = {
-      symbol: symbol,
-      company_name: match.name,
-      current_price: price,
-      currency: "₹",
-      market: "NSE",
-      candles: candles,
-      patterns_detected: [
-        { candle_index: Math.max(0, candles.length - 2), pattern: patternName, bias: isBuy ? "BULLISH" : "BEARISH", strength: conf, formatted_time: "NSE Live", description: "Real-time 15m formation on NSE." }
-      ],
-      sentiment: {
-        net_sentiment: isBuy ? 0.38 : -0.25,
-        sentiment_label: isBuy ? "BULLISH" : "BEARISH",
-        confidence: 82,
-        breakdown: { positive: isBuy ? 7 : 2, neutral: 3, negative: isBuy ? 1 : 5 },
-        ai_summary: `Market sentiment for ${match.name} on Dalal Street is currently **${isBuy ? "BULLISH" : "BEARISH"}**. Monitored via real-time financial feeds.`,
-        articles: [
-          { title: `${match.name} shows strong volume momentum on National Stock Exchange`, source: "Economic Times", origin: "Google News", sentiment: "POSITIVE", link: "#" },
-          { title: `Institutional block deals and accumulation noted for ${match.name}`, source: "Livemint", origin: "Google News", sentiment: "POSITIVE", link: "#" }
-        ]
-      },
-      signal: {
-        action: action,
-        confidence: conf,
-        confluence_score: isBuy ? (conf * 0.75) : -(conf * 0.75),
-        entry_price: price,
-        stop_loss: stopLoss,
-        target_1: target1,
-        target_2: target2,
-        risk_reward_ratio: rrrVal,
-        pattern_detected: patternName,
-        breakdown: { sentiment_component: isBuy ? 38.0 : -25.0, candlestick_component: 85.0, indicator_component: 70.0 },
-        reasons: [
-          `Real NSE 15m Price: ₹${price.toFixed(2)} (${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%).`,
-          isExhausted ? `⚠️ Range Exhausted: Stock has already moved ${usedPct.toFixed(1)}% today. Expected daily range saturated.` : `Target 1: ₹${target1} (+${(tp1Pct*100).toFixed(1)}%) | Safe SL: ₹${stopLoss} (-${(slPct*100).toFixed(1)}%).`,
-          predictiveNote ? predictiveNote : `Pattern: ${patternName} on 15m structure.`
-        ]
-      }
-    };
-    state.currentAnalysis = analysisObj;
-    renderAnalysisData(analysisObj);
-  }
-}
-
-function renderAnalysisData(data) {
-  if (state.chartRenderer) {
-    state.chartRenderer.setData(data.candles, data.patterns_detected);
-  }
-  renderConfluenceSection(data);
-  renderNewsSentimentSection(data);
-  updateTradeTicketDefaults(data);
-}
-
-function renderConfluenceSection(data) {
-  const signal = data.signal;
-  const curr = data.currency || "₹";
-
-  const headerPrice = document.getElementById('chart-cmp-display');
-  if (headerPrice) headerPrice.textContent = `${curr}${data.current_price}`;
-
-  const headerBadge = document.getElementById('chart-signal-badge');
-  if (headerBadge) {
-    headerBadge.textContent = signal.action;
-    headerBadge.className = `badge badge-${signal.action.toLowerCase().replace(' ', '-')}`;
-  }
-
-  // Institutional Badges
-  const smBadge = document.getElementById('chart-smart-money-badge');
-  if (smBadge) {
-    const smText = (data.smart_money && data.smart_money.badge) ? data.smart_money.badge : (signal.smart_money || "Normal Retail Volume");
-    smBadge.textContent = smText;
-    if (smText.includes('Whale Accumulation') || smText.includes('Absorption')) {
-      smBadge.style.background = 'rgba(16,185,129,0.25)';
-      smBadge.style.color = '#10b981';
-    } else if (smText.includes('Distribution')) {
-      smBadge.style.background = 'rgba(239,68,68,0.25)';
-      smBadge.style.color = '#ef4444';
-    } else {
-      smBadge.style.background = 'rgba(6,182,212,0.2)';
-      smBadge.style.color = '#06b6d4';
-    }
-  }
-
-  const mtfBadge = document.getElementById('chart-mtf-badge');
-  if (mtfBadge) {
-    const mtf = data.mtf_matrix;
-    if (mtf && mtf.matrix_status === 'TRIPLE_CONFLUENCE_BULLISH') {
-      mtfBadge.textContent = '🌟 MTF: Triple Bullish Alignment';
-      mtfBadge.style.background = 'rgba(16,185,129,0.25)';
-      mtfBadge.style.color = '#10b981';
-    } else if (mtf && mtf.matrix_status === 'TRIPLE_CONFLUENCE_BEARISH') {
-      mtfBadge.textContent = '⚠️ MTF: Triple Bearish Resistance';
-      mtfBadge.style.background = 'rgba(239,68,68,0.25)';
-      mtfBadge.style.color = '#ef4444';
-    } else {
-      mtfBadge.textContent = `📊 MTF: Daily ${signal.macro_trend || 'NEUTRAL'}`;
-      mtfBadge.style.background = 'rgba(255,255,255,0.1)';
-      mtfBadge.style.color = '#cbd5e1';
-    }
-  }
-
-  const regBadge = document.getElementById('chart-regime-badge');
-  if (regBadge) {
-    const reg = signal.market_regime || 'NORMAL';
-    if (reg === 'CHOPPY_SIDEWAYS') {
-      regBadge.textContent = '🛡️ Chop Shield: Sideways Trap';
-      regBadge.style.background = 'rgba(239,68,68,0.25)';
-      regBadge.style.color = '#ef4444';
-    } else if (reg === 'STRONG_TREND') {
-      regBadge.textContent = '🚀 Regime: High Trend Expansion';
-      regBadge.style.background = 'rgba(16,185,129,0.25)';
-      regBadge.style.color = '#10b981';
-    } else {
-      regBadge.textContent = '🛡️ Regime: Normal';
-      regBadge.style.background = 'rgba(255,255,255,0.1)';
-      regBadge.style.color = '#cbd5e1';
-    }
-  }
-
-  document.getElementById('chip-confluence').textContent = `${signal.confidence}%`;
-  document.getElementById('chip-sentiment').textContent = `${signal.breakdown ? signal.breakdown.sentiment_points : 0}`;
-  document.getElementById('chip-candlestick').textContent = `${signal.breakdown ? signal.breakdown.candlestick_points : 0}`;
-  document.getElementById('chip-technical').textContent = `${signal.breakdown ? signal.breakdown.indicator_points : 0}`;
-
-  const chipOption = document.getElementById('chip-option-chain');
-  if (chipOption) {
-    if (signal.breakdown && signal.breakdown.is_fno === false) {
-      chipOption.textContent = 'Cash (0)';
-    } else {
-      chipOption.textContent = `${signal.breakdown ? signal.breakdown.option_chain_points : 0}`;
-    }
-  }
-
-  const chipMacro = document.getElementById('chip-macro');
-  if (chipMacro) {
-    chipMacro.textContent = `${signal.breakdown ? (signal.breakdown.macro_chop_points || signal.breakdown.macro_points || 0) : 0}`;
-  }
-
-  // Update dynamic VIX pill in header/banner if present
-  const vixPill = document.getElementById('vix-adaptive-pill');
-  if (vixPill && signal.vix_value) {
-    const vixVal = signal.vix_value || 14.2;
-    const vixReg = signal.vix_regime || 'BALANCED';
-    vixPill.textContent = `⚡ VIX: ${vixVal} (${vixReg})`;
-  }
-
-  const reasonsList = document.getElementById('confluence-reasons-list');
-  if (reasonsList) {
-    reasonsList.innerHTML = signal.reasons.map(r => `
-      <li class="reason-item">
-        <span class="reason-bullet">›</span>
-        <span>${r}</span>
-      </li>
-    `).join('');
-  }
-
-  const patternRibbon = document.getElementById('chart-patterns-ribbon');
-  if (patternRibbon) {
-    patternRibbon.innerHTML = data.patterns_detected.map(p => `
-      <span class="badge badge-pattern" title="${p.description}">
-        ${p.pattern} (${p.bias}) @ ${p.formatted_time}
-      </span>
-    `).join('');
-  }
-
-  // Render NSE Option Chain & PCR Widget
-  renderOptionChain(data.option_chain || signal.option_chain, data.symbol, data.current_price);
-}
-
-function renderOptionChain(opt, symbol, price) {
-  const pcrBadge = document.getElementById('pcr-badge');
-  const pcrVal = document.getElementById('pcr-val-display');
-  const maxPain = document.getElementById('max-pain-display');
-  const shortCover = document.getElementById('short-cover-display');
-  const tbody = document.getElementById('option-chain-table-body');
-
-  if (!opt || opt.is_fno === false) {
-    if (pcrBadge) {
-      pcrBadge.textContent = 'Cash Segment (No F&O)';
-      pcrBadge.style.background = 'rgba(255,255,255,0.08)';
-      pcrBadge.style.color = '#94a3b8';
-    }
-    if (pcrVal) pcrVal.textContent = 'N/A';
-    if (maxPain) maxPain.textContent = 'N/A';
-    if (shortCover) shortCover.innerHTML = `<span style="color:#94a3b8;">Cash equity (price action only)</span>`;
-    if (tbody) {
-      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:16px;">This stock is traded in the NSE Cash segment (no F&O derivative contracts). Technical indicators and delivery volume are weighted instead.</td></tr>';
-    }
-    return;
-  }
-
-  if (pcrBadge) {
-    const isBull = (opt.pcr || 1) >= 1.15;
-    const isBear = (opt.pcr || 1) <= 0.85;
-    pcrBadge.textContent = `PCR: ${opt.pcr} (${isBull ? 'Bullish' : (isBear ? 'Bearish' : 'Neutral')})`;
-    pcrBadge.style.background = isBull ? 'rgba(0,245,155,0.18)' : (isBear ? 'rgba(255,51,102,0.18)' : 'rgba(255,255,255,0.1)');
-    pcrBadge.style.color = isBull ? '#00f59b' : (isBear ? '#ff3366' : '#cbd5e1');
-  }
-
-  if (pcrVal) pcrVal.textContent = opt.pcr || '1.00';
-  if (maxPain) maxPain.textContent = `₹${opt.max_pain_strike || price}`;
-  if (shortCover) {
-    if (opt.short_covering_alert) {
-      shortCover.innerHTML = `<span style="color:#00f59b; font-weight:800;">🔥 Call Unwinding Active</span>`;
-    } else {
-      shortCover.innerHTML = `<span style="color:#94a3b8;">Normal OI Build-up</span>`;
-    }
-  }
-
-  if (tbody && opt.strikes) {
-    tbody.innerHTML = opt.strikes.slice(0, 7).map(s => `
-      <tr class="${s.is_atm ? 'atm-row' : ''}">
-        <td style="color:#00e5ff;">${(s.call_oi || 0).toLocaleString()}</td>
-        <td style="color:${(s.call_chg_oi || 0) < 0 ? '#00f59b' : '#94a3b8'};">${s.call_chg_oi > 0 ? '+' : ''}${s.call_chg_oi || 0}</td>
-        <td style="font-weight:800; color:#ffffff; background:rgba(255,255,255,0.05);">${s.strike} ${s.is_atm ? '🎯' : ''}</td>
-        <td style="color:${(s.put_chg_oi || 0) > 0 ? '#00f59b' : '#ff3366'};">${s.put_chg_oi > 0 ? '+' : ''}${s.put_chg_oi || 0}</td>
-        <td style="color:#00f59b;">${(s.put_oi || 0).toLocaleString()}</td>
-      </tr>
-    `).join('');
-  }
-}
-
-// =============================================================================
-// Interactive AI Confidence Scorecard Inspector (6-Pillar Deep Factor Modal)
-// =============================================================================
-function openConfidenceScorecard(symbol) {
-  const modal = document.getElementById('confidence-scorecard-modal');
-  if (!modal) return;
-
-  const sym = symbol || state.currentSymbol;
-  const analysis = (state.currentAnalysis && state.currentAnalysis.symbol === sym) ? state.currentAnalysis : null;
-  const screenerItem = state.screenerData.find(s => s.symbol === sym);
-  const stockInfo = state.watchlist.find(s => s.symbol === sym) || DEFAULT_INDIAN_STOCKS.find(s => s.symbol === sym);
-
-  const titleEl = document.getElementById('modal-stock-title');
-  if (titleEl) titleEl.textContent = `${stockInfo ? stockInfo.name : sym} (${sym.replace('.NS', '')})`;
-
-  const action = analysis ? analysis.signal.action : (screenerItem ? screenerItem.action : 'STRONG BUY');
-  const conf = analysis ? analysis.signal.confidence : (screenerItem ? screenerItem.confidence : 85);
-  const score = analysis ? analysis.signal.confluence_score : (screenerItem ? screenerItem.confluence_score : 68.5);
-
-  const actionBadge = document.getElementById('modal-action-badge');
-  if (actionBadge) {
-    actionBadge.textContent = action;
-    actionBadge.className = `badge badge-${action.toLowerCase().replace(' ', '-')}`;
-  }
-
-  const confNum = document.getElementById('modal-confidence-num');
-  if (confNum) confNum.textContent = `${conf}%`;
-
-  const compScore = document.getElementById('modal-composite-score');
-  if (compScore) {
-    compScore.textContent = (score > 0 ? '+' : '') + score;
-    compScore.style.color = score >= 0 ? '#00f59b' : '#ff3366';
-  }
-
-  const breakdown = (analysis && analysis.signal && analysis.signal.breakdown) ? analysis.signal.breakdown : {
-    sentiment_points: 0.0,
-    candlestick_points: 0.0,
-    indicator_points: 0.0,
-    option_chain_points: 0.0,
-    macro_chop_points: 0.0,
-    macro_points: 0.0,
-    chop_points: 0.0,
-    is_fno: true,
-    pcr: 1.0,
-    vix_regime: "BALANCED"
-  };
-
-  const pillarsContainer = document.getElementById('modal-pillars-container');
-  if (pillarsContainer) {
-    const isCashOnly = breakdown.is_fno === false;
-    const pillars = [
-      {
-        icon: "📈",
-        name: "Technicals & Trend (EMA 9/21, VWAP, SuperTrend, RSI)",
-        weight: isCashOnly ? "41% Normalized Weight" : "35% Weight",
-        pts: breakdown.indicator_points || 0.0,
-        maxPts: isCashOnly ? 41 : 35,
-        color: "#00e5ff"
-      },
-      {
-        icon: "🕯️",
-        name: "15m Candlestick Confluence (High-Probability Pattern)",
-        weight: isCashOnly ? "26% Normalized Weight" : "22% Weight",
-        pts: breakdown.candlestick_points || 0.0,
-        maxPts: isCashOnly ? 26 : 22,
-        color: "#00f59b"
-      },
-      {
-        icon: "📰",
-        name: "Live News & Catalyst Sentiment Radar",
-        weight: isCashOnly ? "21% Normalized Weight" : "18% Weight",
-        pts: breakdown.sentiment_points || 0.0,
-        maxPts: isCashOnly ? 21 : 18,
-        color: "#f59e0b"
-      },
-      {
-        icon: "📊",
-        name: isCashOnly ? "Cash Segment (F&O Not Traded - Reallocated)" : `NSE Option Chain & PCR (${breakdown.pcr || 1.0} Ratio)`,
-        weight: isCashOnly ? "0% (Cash Only)" : "15% Weight",
-        pts: isCashOnly ? 0.0 : (breakdown.option_chain_points || 0.0),
-        maxPts: isCashOnly ? 1 : 15,
-        color: isCashOnly ? "#94a3b8" : "#38bdf8"
-      },
-      {
-        icon: "🛡️",
-        name: `Macro Trend & Market Regime (VIX: ${breakdown.vix_regime || 'BALANCED'})`,
-        weight: isCashOnly ? "12% Normalized Weight" : "10% Weight",
-        pts: breakdown.macro_chop_points !== undefined ? breakdown.macro_chop_points : (breakdown.macro_points || 0.0),
-        maxPts: isCashOnly ? 12 : 10,
-        color: "#a855f7"
-      }
-    ];
-
-    pillarsContainer.innerHTML = pillars.map(p => {
-      const fillPct = Math.min(100, Math.max(10, Math.abs(p.pts / p.maxPts) * 100));
-      return `
-        <div class="pillar-row">
-          <div class="pillar-header">
-            <span class="pillar-title">
-              <span>${p.icon}</span>
-              <span>${p.name} <em style="font-size:0.68rem; color:var(--text-muted); font-style:normal;">(${p.weight})</em></span>
-            </span>
-            <span class="pillar-pts" style="color:${p.color};">${p.pts > 0 ? '+' : ''}${p.pts} pts</span>
-          </div>
-          <div class="pillar-bar-track">
-            <div class="pillar-bar-fill" style="width:${fillPct}%; background:${p.color};"></div>
-          </div>
-        </div>
-      `;
-    }).join('');
-  }
-
-  const reasons = (analysis && analysis.signal && analysis.signal.reasons && analysis.signal.reasons.length) ? analysis.signal.reasons : [
-    "EMA 9 holds firmly above EMA 21 confirming bullish intraday trend structure.",
-    "Price trading above institutional VWAP line in accumulation zone.",
-    "NSE Option Chain shows heavy Put writing support with short-covering at ATM strike.",
-    "Choppiness Index is within safe expansion corridor (<38.2), confirming high-velocity trend.",
-    "Higher timeframe daily momentum aligns with current 15m breakout trajectory."
-  ];
-
-  const reasonsList = document.getElementById('modal-reasons-list');
-  if (reasonsList) {
-    reasonsList.innerHTML = reasons.map(r => `
-      <div style="display:flex; align-items:flex-start; gap:6px;">
-        <span style="color:#00e5ff; font-weight:800;">✓</span>
-        <span>${r}</span>
-      </div>
-    `).join('');
-  }
-
-  modal.style.display = 'flex';
-}
-
-function closeConfidenceScorecard() {
-  const modal = document.getElementById('confidence-scorecard-modal');
-  if (modal) modal.style.display = 'none';
-}
-
-function executeFromScorecard() {
-  closeConfidenceScorecard();
-  const sym = state.currentSymbol;
-  const analysis = state.currentAnalysis;
-  const side = (analysis && analysis.signal && analysis.signal.action.includes('SELL')) ? 'SELL' : 'BUY';
-  const match = state.watchlist.find(s => s.symbol === sym) || DEFAULT_INDIAN_STOCKS.find(s => s.symbol === sym);
-  const cmp = match ? match.price : 500;
-  const vParams = getStockVolatilityParameters(sym, cmp);
-  const sl = (analysis && analysis.signal && analysis.signal.stop_loss) ? analysis.signal.stop_loss : Math.round((cmp * (side === 'BUY' ? (1 - vParams.slPct) : (1 + vParams.slPct))) * 100) / 100;
-  const tp = (analysis && analysis.signal && analysis.signal.target_1) ? analysis.signal.target_1 : Math.round((cmp * (side === 'BUY' ? (1 + vParams.tp1Pct) : (1 - vParams.tp1Pct))) * 100) / 100;
-  quickTradePrompt(sym, side, cmp, sl, tp);
-}
-
-// =============================================================================
-// Level 2 Market Depth & Institutional Whale Tracker
-// =============================================================================
-let depthRefreshTimer = null;
-
-async function openWhaleDepthModal(symbol) {
-  symbol = symbol || state.currentSymbol || 'RELIANCE.NS';
-  const modal = document.getElementById('whale-depth-modal');
-  if (!modal) return;
-
-  const cleanSym = symbol.replace('.NS', '').replace('-EQ', '').toUpperCase();
-  const symBadge = document.getElementById('depth-modal-symbol-badge');
-  if (symBadge) symBadge.textContent = cleanSym;
-
-  modal.style.display = 'flex';
-  await refreshWhaleDepth(symbol);
-
-  if (depthRefreshTimer) clearInterval(depthRefreshTimer);
-  depthRefreshTimer = setInterval(() => {
-    if (modal.style.display === 'flex') {
-      refreshWhaleDepth(symbol);
-    } else {
-      clearInterval(depthRefreshTimer);
-      depthRefreshTimer = null;
-    }
-  }, 2000);
-}
-
-function closeWhaleDepthModal() {
-  const modal = document.getElementById('whale-depth-modal');
-  if (modal) modal.style.display = 'none';
-  if (depthRefreshTimer) {
-    clearInterval(depthRefreshTimer);
-    depthRefreshTimer = null;
-  }
-}
-
-async function refreshWhaleDepth(symbol) {
-  try {
-    const res = await fetch(`${API_BASE}/api/broker/depth/${encodeURIComponent(symbol)}`);
-    if (!res.ok) return;
-    const data = await res.json();
-    if (!data.status) return;
-
-    const priceEl = document.getElementById('depth-modal-price');
-    if (priceEl) priceEl.textContent = `₹${parseFloat(data.ltp).toFixed(2)}`;
-
-    const pctEl = document.getElementById('depth-modal-pct');
-    if (pctEl) {
-      const pct = parseFloat(data.percent_change || 0);
-      pctEl.textContent = `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
-      pctEl.className = `badge ${pct >= 0 ? 'badge-buy' : 'badge-sell'}`;
-    }
-
-    const feedTimeEl = document.getElementById('depth-modal-feed-time');
-    if (feedTimeEl) feedTimeEl.textContent = data.feed_time ? `Exchange Feed: ${data.feed_time}` : 'Direct NSE Tick';
-
-    const whaleBadge = document.getElementById('depth-whale-badge');
-    if (whaleBadge) {
-      whaleBadge.textContent = data.whale_label || '⚖️ Balanced Order Book';
-      whaleBadge.style.color = data.whale_bias === 'BULLISH' ? '#10b981' : (data.whale_bias === 'BEARISH' ? '#ef4444' : '#00e5ff');
-    }
-
-    const buyVolEl = document.getElementById('depth-buy-vol');
-    const sellVolEl = document.getElementById('depth-sell-vol');
-    const buyPctEl = document.getElementById('depth-buy-pct');
-    const sellPctEl = document.getElementById('depth-sell-pct');
-    const barBuy = document.getElementById('depth-bar-buy');
-    const barSell = document.getElementById('depth-bar-sell');
-
-    if (buyVolEl) buyVolEl.textContent = (data.tot_buy_quan || 0).toLocaleString('en-IN');
-    if (sellVolEl) sellVolEl.textContent = (data.tot_sell_quan || 0).toLocaleString('en-IN');
-    if (buyPctEl) buyPctEl.textContent = `${data.buy_ratio}%`;
-    if (sellPctEl) sellPctEl.textContent = `${data.sell_ratio}%`;
-    if (barBuy) barBuy.style.width = `${data.buy_ratio}%`;
-    if (barSell) barSell.style.width = `${data.sell_ratio}%`;
-
-    const wallAlert = document.getElementById('depth-wall-alert');
-    if (wallAlert) {
-      if (data.big_buy_wall) {
-        wallAlert.style.display = 'block';
-        wallAlert.style.borderColor = 'rgba(16,185,129,0.4)';
-        wallAlert.style.color = '#10b981';
-        wallAlert.textContent = '🐋 Big Institutional Buy Wall (FII/DII Support Block Detected in Bids)';
-      } else if (data.big_sell_wall) {
-        wallAlert.style.display = 'block';
-        wallAlert.style.borderColor = 'rgba(239,68,68,0.4)';
-        wallAlert.style.color = '#ef4444';
-        wallAlert.textContent = '🚨 Big Institutional Sell Wall (Whale Supply Resistance Detected in Asks)';
-      } else {
-        wallAlert.style.display = 'none';
-      }
-    }
-
-    const bidsTbody = document.getElementById('depth-bids-tbody');
-    if (bidsTbody && data.bids) {
-      bidsTbody.innerHTML = data.bids.map(b => `
-        <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
-          <td style="color:#10b981; font-weight:700; padding:4px 2px;">₹${parseFloat(b.price || 0).toFixed(2)}</td>
-          <td style="text-align:right; color:#cbd5e1; padding:4px 2px;">
-            <strong>${(b.quantity || 0).toLocaleString('en-IN')}</strong>
-            <span style="font-size:0.65rem; color:var(--text-muted); margin-left:2px;">(${b.orders || 0})</span>
-          </td>
-        </tr>
-      `).join('');
-    }
-
-    const asksTbody = document.getElementById('depth-asks-tbody');
-    if (asksTbody && data.asks) {
-      asksTbody.innerHTML = data.asks.map(a => `
-        <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
-          <td style="color:#ef4444; font-weight:700; padding:4px 2px;">₹${parseFloat(a.price || 0).toFixed(2)}</td>
-          <td style="text-align:right; color:#cbd5e1; padding:4px 2px;">
-            <strong>${(a.quantity || 0).toLocaleString('en-IN')}</strong>
-            <span style="font-size:0.65rem; color:var(--text-muted); margin-left:2px;">(${a.orders || 0})</span>
-          </td>
-        </tr>
-      `).join('');
-    }
-  } catch (err) {
-    console.warn('[Whale Depth] Fetch error:', err);
-  }
-}
-
-function quickTradeFromDepth(side) {
-  closeWhaleDepthModal();
-  switchTab('trading');
-  state.orderSide = side;
-  const buyBtn = document.getElementById('order-btn-buy');
-  const sellBtn = document.getElementById('order-btn-sell');
-  if (side === 'BUY') {
-    if (buyBtn) buyBtn.className = 'order-type-btn active buy-active';
-    if (sellBtn) sellBtn.className = 'order-type-btn';
-  } else {
-    if (sellBtn) sellBtn.className = 'order-type-btn active sell-active';
-    if (buyBtn) buyBtn.className = 'order-type-btn';
-  }
-  applyMarginFraction(1.0);
-}
-
-// =============================================================================
-// AI Self-Learning Factor Optimizer (Daily Post-Market Auto-Tuning)
-// =============================================================================
-async function loadAiFactorMatrix() {
-  const container = document.getElementById('factor-matrix-container');
-  if (!container) return;
-
-  try {
-    const res = await fetch(`${API_BASE}/api/ai/factor-matrix`);
-    const data = await res.json();
-    if (data && data.factors) {
-      container.innerHTML = data.factors.map(f => `
-        <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-radius:8px; padding:8px 12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
-          <div>
-            <div style="font-size:0.82rem; font-weight:700; color:#fff;">
-              ${f.name}
-              <span class="badge" style="background:rgba(0,229,255,0.15); color:#00e5ff; font-size:0.62rem; margin-left:6px;">${f.category}</span>
-            </div>
-            <div style="font-size:0.72rem; color:var(--text-muted); margin-top:2px;">
-              ${f.recommendation}
-            </div>
-          </div>
-          <div style="text-align:right;">
-            <div style="font-size:0.95rem; font-weight:800; color:#00f59b; font-family:var(--font-mono);">${f.win_rate}% Win Rate</div>
-            <div style="font-size:0.65rem; color:#f59e0b; font-weight:700;">Weight: ${f.current_weight}</div>
-          </div>
-        </div>
-      `).join('');
-      return;
-    }
-  } catch (err) {}
-
-  // Bulletproof Local Fallback
-  const fallbackFactors = [
-    { name: "9 / 21 EMA & SuperTrend Momentum", category: "Trend Following", win_rate: 84.6, current_weight: "35%", recommendation: "Maintains highest directional edge on 15m Indian equities." },
-    { name: "NSE Live Option Chain & PCR Analysis", category: "Derivative Open Interest", win_rate: 81.4, current_weight: "15%", recommendation: "Short-covering rallies confirm breakout follow-through." },
-    { name: "15m Candlestick Confluence (Engulfing/Hammer)", category: "Price Action", win_rate: 78.8, current_weight: "22%", recommendation: "High accuracy when confirmed with VWAP above average volume." },
-    { name: "Live News Sentiment & Catalyst Radar", category: "Fundamental NLP", win_rate: 74.2, current_weight: "18%", recommendation: "Filters out earnings surprises and governance headwind drops." },
-    { name: "Choppiness Index & Market Regime Filter", category: "Capital Preservation", win_rate: 91.0, current_weight: "Risk Overrider", recommendation: "Overrides trades to NEUTRAL when Chop > 61.8, saving capital." }
-  ];
-  container.innerHTML = fallbackFactors.map(f => `
-    <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-radius:8px; padding:8px 12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
-      <div>
-        <div style="font-size:0.82rem; font-weight:700; color:#fff;">
-          ${f.name}
-          <span class="badge" style="background:rgba(0,229,255,0.15); color:#00e5ff; font-size:0.62rem; margin-left:6px;">${f.category}</span>
-        </div>
-        <div style="font-size:0.72rem; color:var(--text-muted); margin-top:2px;">
-          ${f.recommendation}
-        </div>
-      </div>
-      <div style="text-align:right;">
-        <div style="font-size:0.95rem; font-weight:800; color:#00f59b; font-family:var(--font-mono);">${f.win_rate}% Win Rate</div>
-        <div style="font-size:0.65rem; color:#f59e0b; font-weight:700;">Weight: ${f.current_weight}</div>
-      </div>
-    </div>
-  `).join('');
-}
-
-function renderNewsSentimentSection(data) {
-  const sent = data.sentiment;
-  if (!sent) return;
-
-  const gaugeMarker = document.getElementById('sentiment-gauge-marker');
-  if (gaugeMarker) {
-    const pct = ((sent.net_sentiment + 1.0) / 2.0) * 100;
-    gaugeMarker.style.left = `${Math.max(5, Math.min(95, pct))}%`;
-  }
-
-  document.getElementById('sentiment-score-val').textContent = (sent.net_sentiment > 0 ? '+' : '') + sent.net_sentiment.toFixed(2);
-  document.getElementById('sentiment-label-val').textContent = sent.sentiment_label;
-  document.getElementById('sentiment-pos-count').textContent = sent.breakdown.positive;
-  document.getElementById('sentiment-neu-count').textContent = sent.breakdown.neutral;
-  document.getElementById('sentiment-neg-count').textContent = sent.breakdown.negative;
-
-  const aiSummaryEl = document.getElementById('ai-summary-text');
-  if (aiSummaryEl) aiSummaryEl.innerHTML = sent.ai_summary;
-
-  const streamEl = document.getElementById('news-stream-list');
-  if (streamEl && sent.articles) {
-    streamEl.innerHTML = sent.articles.map(a => {
-      const isPos = a.sentiment === 'POSITIVE' || (a.sentiment_score || 0) > 0.1;
-      const isNeg = a.sentiment === 'NEGATIVE' || (a.sentiment_score || 0) < -0.1;
-      const tagClass = isPos ? 'badge-buy' : (isNeg ? 'badge-sell' : 'badge-neutral');
-      const tagText = isPos ? '🟢 BULLISH CATALYST' : (isNeg ? '🔴 BEARISH RISK' : '⚪ NEUTRAL FLOW');
-
-      const action = a.action_advice || (isPos ? 'BUY ON BREAKOUT' : (isNeg ? 'AVOID / PROFIT BOOK' : 'HOLD / MONITOR'));
-      const rationale = a.why_action || (isPos ? 
-        'Positive operating momentum and sentiment create strong buyer support above 15m EMA.' : 
-        (isNeg ? 'Headwind developments or negative coverage indicate overhead selling pressure and risk of slippage.' : 
-        'Developments appear balanced with no major directional price distortion.'));
-
-      const posFactors = (a.positive_factors && a.positive_factors.length) ? a.positive_factors : (isPos ? ['Institutional Accumulation Bias', 'Positive Dalal Street Flow'] : []);
-      const negRisks = (a.negative_risks && a.negative_risks.length) ? a.negative_risks : (isNeg ? ['Margin Compression Risk', 'Trapped Sellers Resistance'] : ['Near-term market volatility']);
-
-      const sym = a.matched_symbol || data.symbol || '';
-
-      return `
-        <div class="news-card" style="margin-bottom:12px;">
-          <div class="news-header">
-            <span class="news-source">${a.source || 'Dalal Street News'} • ${a.origin || 'Financial Media'}</span>
-            <span class="badge ${tagClass}" style="font-size:0.68rem; font-weight:800;">${tagText}</span>
-          </div>
-
-          <a href="${a.link || '#'}" target="_blank" rel="noopener" style="text-decoration:none; color:inherit;">
-            <div class="news-title" style="font-size:0.92rem; font-weight:700; line-height:1.35; margin:4px 0 8px 0; color:#f8fafc;">
-              ${a.title}
-            </div>
-          </a>
-
-          <!-- Deep Action & Rationale Breakdown -->
-          <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.07); border-radius:8px; padding:10px 12px; margin-top:4px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:6px;">
-              <div style="font-size:0.75rem;">
-                <span style="color:var(--text-muted);">Trade Recommendation:</span>
-                <strong style="color:${isPos ? '#00F59B' : (isNeg ? '#FF3366' : '#94a3b8')}; margin-left:4px; font-weight:800;">
-                  ${action}
-                </strong>
-              </div>
-              ${a.projected_move ? `
-                <span style="font-size:0.72rem; color:var(--text-muted);">
-                  Expected: <strong style="color:${isPos ? '#00F59B' : '#FF3366'};">${a.projected_move}</strong>
-                </span>
-              ` : ''}
-            </div>
-
-            <div style="font-size:0.78rem; line-height:1.4; color:#cbd5e1; margin-bottom:8px;">
-              <strong style="color:#06b6d4;">💡 Why Buy / Sell:</strong> ${rationale}
-            </div>
-
-            <!-- Positive and Negative Factors Side-by-Side -->
-            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:8px; border-top:1px solid rgba(255,255,255,0.06); padding-top:8px;">
-              ${posFactors.length ? `
-                <div>
-                  <div style="font-size:0.68rem; font-weight:700; color:#00F59B; margin-bottom:4px;">✅ POSITIVE CATALYSTS:</div>
-                  <div style="display:flex; flex-wrap:wrap; gap:4px;">
-                    ${posFactors.map(f => `<span style="background:rgba(0,245,155,0.12); color:#00F59B; font-size:0.65rem; padding:2px 6px; border-radius:4px; border:1px solid rgba(0,245,155,0.25);">+ ${f}</span>`).join('')}
-                  </div>
-                </div>
-              ` : ''}
-
-              ${negRisks.length ? `
-                <div>
-                  <div style="font-size:0.68rem; font-weight:700; color:#FF3366; margin-bottom:4px;">⚠️ RISKS & HEADWINDS:</div>
-                  <div style="display:flex; flex-wrap:wrap; gap:4px;">
-                    ${negRisks.map(r => `<span style="background:rgba(255,51,102,0.12); color:#FF3366; font-size:0.65rem; padding:2px 6px; border-radius:4px; border:1px solid rgba(255,51,102,0.25);">⚠ ${r}</span>`).join('')}
-                  </div>
-                </div>
-              ` : ''}
-            </div>
-          </div>
-
-          <!-- Quick Action Footer -->
-          ${sym ? `
-            <div style="display:flex; justify-content:flex-end; align-items:center; margin-top:8px;">
-              <button class="btn ${isPos ? 'btn-bullish' : 'btn-bearish'} btn-sm" style="font-size:0.72rem; padding:4px 12px; font-weight:700;" onclick="handleFlashNewsAction('${sym}', '${isPos ? 'BUY' : 'SELL'}')">
-                ⚡ 1-Tap Trade (${sym.replace('.NS', '')})
-              </button>
-            </div>
-          ` : ''}
-        </div>
-      `;
-    }).join('');
-  }
-}
-
-// =============================================================================
-// Paper Trading & Autonomous AI Auto-Trader Logic
-// =============================================================================
-function initTradeTicket() {
-  const buyBtn = document.getElementById('order-btn-buy');
-  const sellBtn = document.getElementById('order-btn-sell');
-  const qtyInput = document.getElementById('order-qty-input');
-
-  buyBtn.addEventListener('click', () => {
-    state.orderSide = 'BUY';
-    buyBtn.className = 'order-type-btn active buy-active';
-    sellBtn.className = 'order-type-btn';
-    updateOrderSummary();
-  });
-
-  sellBtn.addEventListener('click', () => {
-    state.orderSide = 'SELL';
-    sellBtn.className = 'order-type-btn active sell-active';
-    buyBtn.className = 'order-type-btn';
-    updateOrderSummary();
-  });
-
-  qtyInput.addEventListener('input', updateOrderSummary);
-
-  document.querySelectorAll('.qty-chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      const add = parseInt(chip.dataset.add);
-      qtyInput.value = parseInt(qtyInput.value || 0) + add;
-      updateOrderSummary();
-    });
-  });
-
-  const form = document.getElementById('trade-ticket-form');
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    await submitTradeOrder();
-  });
-}
-
-function updateTradeTicketDefaults(data) {
-  const symbolSelect = document.getElementById('order-symbol-select');
-  if (symbolSelect) symbolSelect.value = data.symbol;
-
-  const priceInput = document.getElementById('order-price-input');
-  if (priceInput) priceInput.value = data.current_price;
-
-  const slInput = document.getElementById('order-sl-input');
-  const tpInput = document.getElementById('order-tp-input');
-  if (slInput) slInput.value = data.signal.stop_loss;
-  if (tpInput) tpInput.value = data.signal.target_1;
-
-  updateOrderSummary();
-}
-
-function applyMarginFraction(fraction) {
-  const price = parseFloat(document.getElementById('order-price-input').value) || 0;
-  if (price <= 0) {
-    showToast('Price not loaded yet. Select a stock first.', 'warning');
-    return;
-  }
-
-  let cash = 100000;
-  if (state.executionMode === 'REAL_BROKER') {
-    cash = state.angelRms ? (state.angelRms.available_cash || state.angelRms.net || 0) : 0;
-    if (cash <= 0) {
-      showToast('Angel One available margin is ₹0. Check Angel One funds.', 'warning');
-      return;
-    }
-  } else if (state.portfolio && state.portfolio.cash) {
-    cash = state.portfolio.cash;
-  }
-
-  const buyingPower = cash * INTRADAY_LEVERAGE;
-  const targetBudget = buyingPower * fraction;
-  const maxQty = Math.floor(targetBudget / price);
-  const finalQty = Math.max(1, maxQty);
-
-  const qtyInput = document.getElementById('order-qty-input');
-  if (qtyInput) {
-    qtyInput.value = finalQty;
-    updateOrderSummary();
-    showToast(`⚡ Set quantity to ${finalQty} shares (${Math.round(fraction * 100)}% 5x Margin)`, 'info');
-  }
-}
-
-function updateOrderSummary() {
-  const qty = parseInt(document.getElementById('order-qty-input').value) || 0;
-  const price = parseFloat(document.getElementById('order-price-input').value) || 0;
-  const total = (qty * price).toFixed(2);
-  const marginReq = (qty * price / INTRADAY_LEVERAGE).toFixed(2);
-
-  const totalEl = document.getElementById('order-total-est');
-  if (totalEl) totalEl.textContent = `₹${parseFloat(total).toLocaleString('en-IN')}`;
-
-  const marginEl = document.getElementById('order-margin-est');
-  if (marginEl) marginEl.textContent = `₹${parseFloat(marginReq).toLocaleString('en-IN')}`;
-
-  let cash = 100000;
-  if (state.executionMode === 'REAL_BROKER') {
-    cash = state.angelRms ? (state.angelRms.available_cash || state.angelRms.net || 0) : 0;
-  } else if (state.portfolio && state.portfolio.cash) {
-    cash = state.portfolio.cash;
-  }
-
-  const maxAllowedQty = price > 0 ? Math.floor((cash * INTRADAY_LEVERAGE) / price) : 0;
-  const maxPill = document.getElementById('order-max-qty-pill');
-  if (maxPill) {
-    maxPill.textContent = `Max 5x: ${maxAllowedQty} shs`;
-  }
-
-  const statusBox = document.getElementById('order-margin-status-box');
-  const statusText = document.getElementById('order-margin-status-text');
-  const statusBadge = document.getElementById('order-margin-status-badge');
-
-  if (statusBox && statusText && statusBadge) {
-    if (parseFloat(marginReq) > cash && cash > 0) {
-      statusBox.style.background = 'rgba(239, 68, 68, 0.15)';
-      statusBox.style.borderColor = 'rgba(239, 68, 68, 0.4)';
-      statusBox.style.color = '#ef4444';
-      statusText.textContent = `⚠️ Exceeds Margin! Max 5x is ${maxAllowedQty} shares (Need ₹${parseFloat(marginReq).toLocaleString('en-IN')})`;
-      statusBadge.textContent = '❌ Insufficient Funds';
-    } else {
-      statusBox.style.background = 'rgba(16, 185, 129, 0.1)';
-      statusBox.style.borderColor = 'rgba(16, 185, 129, 0.25)';
-      statusBox.style.color = '#10b981';
-      statusText.textContent = `💼 Cash: ₹${parseFloat(cash).toLocaleString('en-IN')} | 5x Power: ₹${parseFloat(cash * INTRADAY_LEVERAGE).toLocaleString('en-IN')}`;
-      statusBadge.textContent = '✅ Margin Approved';
-    }
-  }
-
-  const submitBtn = document.getElementById('order-submit-btn');
-  if (state.executionMode === 'REAL_BROKER') {
-    submitBtn.textContent = `${state.orderSide === 'BUY' ? '⚡ Execute Angel One BUY (5x MIS)' : '⚡ Execute Angel One SELL (5x MIS)'}`;
-  } else {
-    submitBtn.textContent = `${state.orderSide === 'BUY' ? 'Execute Virtual BUY (5x MIS)' : 'Execute Virtual SELL (5x MIS)'}`;
-  }
-  submitBtn.className = `btn ${state.orderSide === 'BUY' ? 'btn-bullish' : 'btn-bearish'}`;
-}
-
-async function submitTradeOrder() {
-  const symbol = document.getElementById('order-symbol-select').value;
-  const qty = parseInt(document.getElementById('order-qty-input').value);
-  const price = parseFloat(document.getElementById('order-price-input').value);
-  const sl = parseFloat(document.getElementById('order-sl-input').value) || null;
-  const tp = parseFloat(document.getElementById('order-tp-input').value) || null;
-  const cost = qty * price;
-  const marginRequired = Math.round((cost / INTRADAY_LEVERAGE) * 100) / 100;
-
-  // Real Angel One Broker Execution Branch
-  if (state.executionMode === 'REAL_BROKER') {
-    const cleanSym = symbol.replace('.NS', '').replace('-EQ', '').toUpperCase();
-    if (state.excludeDematHoldings && state.dematHoldings.includes(cleanSym)) {
-      showToast(`🛡️ Demat Shield: ${cleanSym} is in your Demat long-term portfolio! Strict Demat Isolation is ON to prevent touching your delivery shares.`, 'warning');
-      return;
-    }
-
-    const confirmed = confirm(
-      `⚡ CONFIRM REAL BROKER ORDER (Angel One)\n\n` +
-      `• Symbol: ${cleanSym}-EQ (NSE)\n` +
-      `• Side: ${state.orderSide}\n` +
-      `• Quantity: ${qty} shares\n` +
-      `• Total Order Value: ₹${cost.toLocaleString('en-IN')}\n` +
-      `• ⚡ 5X Intraday Margin Blocked: ₹${marginRequired.toLocaleString('en-IN')} (20% Upfront)\n` +
-      `• Product Type: INTRADAY (MIS) 🛡️\n` +
-      `• 🔒 Demat Holding Protection: 100% Ring-Fenced (Existing Demat delivery shares will NOT be touched)\n\n` +
-      `Do you want to send this live order to Angel One?`
-    );
-    if (!confirmed) return;
-
-    const res = await executeAngelLiveOrder(symbol, state.orderSide, qty, price, sl, tp);
-    if (!res || !res.success) return;
-    fetchAngelRmsFunds();
-    return; // Real order executed on Angel One! Do not execute virtual paper trade!
-  }
-
-  // Virtual Paper Trading Branch (Only if executionMode is PAPER)
-  try {
-    const res = await fetch(`${API_BASE}/api/paper/order`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        symbol,
-        side: state.orderSide,
-        quantity: qty,
-        price,
-        stop_loss: sl,
-        target_price: tp,
-        trade_type: "MANUAL"
-      })
-    });
-    const result = await res.json();
-    if (result.success) {
-      showToast(result.message, 'success');
-      loadPortfolio();
-      return;
-    }
-  } catch (err) {}
-
-  // Local Storage fallback
-  const localPositions = JSON.parse(localStorage.getItem('stockai_open_positions') || '[]');
-  const localClosed = JSON.parse(localStorage.getItem('stockai_closed_positions') || '[]');
-  const initialBalance = 100000.0;
-  const realizedPnl = localClosed.reduce((acc, c) => acc + (c.realized_pnl || 0), 0);
-  const totalInvested = localPositions.reduce((acc, p) => acc + (p.margin_blocked || Math.round((p.entry_price * p.quantity / INTRADAY_LEVERAGE) * 100) / 100), 0);
-  let availableCash = Math.max(0, initialBalance + realizedPnl - totalInvested);
-
-  if (availableCash >= marginRequired) {
-    availableCash -= marginRequired;
-    localStorage.setItem('stockai_cash', availableCash.toString());
-    localPositions.unshift({
-      id: Date.now(),
-      symbol,
-      side: state.orderSide,
-      quantity: qty,
-      entry_price: price,
-      current_price: price,
-      anchor_price: price,
-      margin_blocked: marginRequired,
-      order_value: cost,
-      leverage: INTRADAY_LEVERAGE,
-      product_type: "INTRADAY",
-      unrealized_pnl: 0.0,
-      unrealized_pnl_pct: 0.0,
-      stop_loss: sl,
-      target_price: tp,
-      trade_type: "MANUAL"
-    });
-    localStorage.setItem('stockai_open_positions', JSON.stringify(localPositions));
-    showToast(`(Virtual Trade 5x MIS) ${state.orderSide} ${qty} shares of ${symbol} at ₹${price.toFixed(2)} (Margin: ₹${marginRequired.toFixed(2)})!`, 'success');
-    loadPortfolio();
-  } else {
-    showToast(`Insufficient margin (5x Needed: ₹${Math.round(marginRequired).toLocaleString()}, Available: ₹${Math.round(availableCash).toLocaleString()})`, 'error');
-  }
-}
-
-// =============================================================================
-// AI Trade Mode & Approval Hub (Semi-Autonomous Approval & Custom Quantity)
-// =============================================================================
-function setAiTradeMode(mode) {
-  state.aiTradeMode = mode;
-  localStorage.setItem('stockai_trade_mode', mode);
-  updateAiTradeModeUI();
-  if (mode === 'APPROVAL') {
-    showToast('🛡️ Switched to Semi-Auto Mode: You review & approve trades and set custom quantity!', 'success');
-  } else {
-    showToast('🤖 Switched to Full Auto Mode: AI will execute qualified trades automatically.', 'info');
-  }
-}
-
-function updateAiTradeModeUI() {
-  const mode = state.aiTradeMode || 'APPROVAL';
-  const badge = document.getElementById('ai-autotrader-badge');
-  const btnAppr = document.getElementById('btn-mode-approval');
-  const btnAuto = document.getElementById('btn-mode-fullauto');
-
-  if (btnAppr && btnAuto) {
-    if (mode === 'APPROVAL') {
-      btnAppr.className = 'btn btn-sm';
-      btnAppr.style.background = 'rgba(16,185,129,0.25)';
-      btnAppr.style.borderColor = '#10b981';
-      btnAppr.style.color = '#10b981';
-
-      btnAuto.className = 'btn btn-sm btn-outline';
-      btnAuto.style.background = 'none';
-      btnAuto.style.borderColor = 'rgba(255,255,255,0.15)';
-      btnAuto.style.color = 'var(--text-muted)';
-
-      if (badge) {
-        badge.textContent = '🛡️ APPROVAL MODE ACTIVE';
-        badge.style.background = 'rgba(16,185,129,0.25)';
-        badge.style.color = '#10b981';
-        badge.style.borderColor = 'rgba(16,185,129,0.5)';
-      }
-    } else {
-      btnAuto.className = 'btn btn-sm';
-      btnAuto.style.background = 'rgba(0,229,255,0.25)';
-      btnAuto.style.borderColor = '#00e5ff';
-      btnAuto.style.color = '#00e5ff';
-
-      btnAppr.className = 'btn btn-sm btn-outline';
-      btnAppr.style.background = 'none';
-      btnAppr.style.borderColor = 'rgba(255,255,255,0.15)';
-      btnAppr.style.color = 'var(--text-muted)';
-
-      if (badge) {
-        badge.textContent = '⚡ FULL AUTO ACTIVE';
-        badge.style.background = 'rgba(0,229,255,0.25)';
-        badge.style.color = '#00e5ff';
-        badge.style.borderColor = 'rgba(0,229,255,0.5)';
-      }
-    }
-  }
-}
-
-// =============================================================================
-// Trade Execution Mode Engine (Paper Trading vs Real Angel One Broker)
-// & Demat Delivery Holding Protection Shield
-// =============================================================================
-function setExecutionMode(mode) {
-  if (mode === 'REAL_BROKER') {
-    const isAuth = localStorage.getItem('stockai_angel_auth') === 'true';
-    if (!isAuth) {
-      showToast('⚠️ Angel One not authenticated yet! Configure credentials in Settings tab first.', 'warning');
-      switchTab('settings');
-      return;
-    }
-    const confirmed = confirm(
-      "⚠️ HIGH RISK WARNING: REAL MONEY LIVE BROKER MODE\n\n" +
-      "You are about to switch to Angel One Live Trading.\n\n" +
-      "• All placed orders will use REAL MONEY from your Angel One account.\n" +
-      "• MIS Intraday trades carry capital loss risk.\n\n" +
-      "Do you confirm that you want to switch to REAL BROKER mode?"
-    );
-    if (!confirmed) {
-      return;
-    }
-  }
-
-  state.executionMode = mode;
-  localStorage.setItem('stockai_execution_mode', mode);
-  updateExecutionModeUI();
-  updateOrderSummary();
-  updateApprovalModalFundsUI();
-
-  if (mode === 'REAL_BROKER') {
-    showToast('⚡ Angel One Real Broker Active! (INTRADAY Mode - Demat Delivery Protected)', 'success');
-    fetchAngelDematHoldings();
-    fetchAngelRmsFunds();
-  } else {
-    showToast('🧪 Switched to Paper Trading Mode (Virtual ₹1,00,000)', 'info');
-  }
-}
-
-function updateExecutionModeUI() {
-  const mode = state.executionMode || 'PAPER';
-  const paperBtn = document.getElementById('btn-engine-paper');
-  const brokerBtn = document.getElementById('btn-engine-broker');
-  const shieldCard = document.getElementById('demat-shield-card');
-  const ticketTitle = document.getElementById('order-ticket-title');
-  const ticketBadge = document.getElementById('order-ticket-mode-badge');
-  const submitBtn = document.getElementById('order-submit-btn');
-
-  const navTab = document.getElementById('nav-tab-trading');
-  const bottomTab = document.getElementById('bottom-tab-trading-label');
-  const secTitle = document.getElementById('section-title-trading');
-
-  if (mode === 'REAL_BROKER') {
-    if (navTab) navTab.innerHTML = '⚡ Live Broker';
-    if (bottomTab) bottomTab.textContent = '⚡ Live Broker';
-    if (secTitle) secTitle.innerHTML = '⚡ Angel One Live Trading & AI Auto-Trader';
-
-    if (paperBtn) {
-      paperBtn.className = 'btn btn-sm btn-outline';
-      paperBtn.style.color = 'var(--text-muted)';
-      paperBtn.style.borderColor = 'rgba(255,255,255,0.15)';
-      paperBtn.style.background = 'transparent';
-    }
-    if (brokerBtn) {
-      brokerBtn.className = 'btn btn-sm';
-      brokerBtn.style.color = '#10b981';
-      brokerBtn.style.borderColor = '#10b981';
-      brokerBtn.style.background = 'rgba(16,185,129,0.2)';
-    }
-    if (shieldCard) shieldCard.style.display = 'block';
-    if (ticketTitle) ticketTitle.textContent = '⚡ Angel One Live Broker Order';
-    if (ticketBadge) {
-      ticketBadge.textContent = '⚡ LIVE BROKER (INTRADAY)';
-      ticketBadge.style.background = 'rgba(16,185,129,0.2)';
-      ticketBadge.style.color = '#10b981';
-      ticketBadge.style.borderColor = 'rgba(16,185,129,0.4)';
-    }
-    if (submitBtn) {
-      submitBtn.textContent = state.orderSide === 'BUY' ? '⚡ Execute Angel One BUY (INTRADAY)' : '⚡ Execute Angel One SELL (INTRADAY)';
-    }
-  } else {
-    if (navTab) navTab.innerHTML = '💼 Paper Trade';
-    if (bottomTab) bottomTab.textContent = 'Paper Trade';
-    if (secTitle) secTitle.innerHTML = '🧪 Paper Trading & AI Auto-Trader';
-
-    if (paperBtn) {
-      paperBtn.className = 'btn btn-sm';
-      paperBtn.style.color = '#00e5ff';
-      paperBtn.style.borderColor = '#00e5ff';
-      paperBtn.style.background = 'rgba(0,229,255,0.18)';
-    }
-    if (brokerBtn) {
-      brokerBtn.className = 'btn btn-sm btn-outline';
-      brokerBtn.style.color = 'var(--text-muted)';
-      brokerBtn.style.borderColor = 'rgba(255,255,255,0.15)';
-      brokerBtn.style.background = 'transparent';
-    }
-    if (shieldCard) shieldCard.style.display = 'none';
-    if (ticketTitle) ticketTitle.textContent = 'Virtual Order Ticket';
-    if (ticketBadge) {
-      ticketBadge.textContent = '🧪 PAPER MODE';
-      ticketBadge.style.background = 'rgba(0,229,255,0.15)';
-      ticketBadge.style.color = '#00e5ff';
-      ticketBadge.style.borderColor = 'rgba(0,229,255,0.3)';
-    }
-    if (submitBtn) {
-      submitBtn.textContent = state.orderSide === 'BUY' ? 'Execute Virtual BUY' : 'Execute Virtual SELL';
-    }
-  }
-}
-
-async function fetchAngelRmsFunds() {
-  const angelJwt = localStorage.getItem('stockai_angel_jwt');
-  const angelKey = localStorage.getItem('stockai_angel_key');
-  if (!angelJwt || !angelKey) return null;
-
-  try {
-    // 1. Try Python backend first
-    try {
-      const res = await fetch(`${API_BASE}/api/broker/rms`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.status) {
-          state.angelRms = data;
-          updateApprovalModalFundsUI();
-          return data;
-        }
-      }
-    } catch (e) {}
-
-    // 2. Direct SmartAPI call from phone / APK
-    const directRes = await fetch('https://apiconnect.angelone.in/rest/secure/angelbroking/user/v1/getRMS', {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'X-UserType': 'USER',
-        'X-SourceID': 'WEB',
-        'X-ClientLocalIP': '127.0.0.1',
-        'X-ClientPublicIP': '49.43.225.185',
-        'X-MACAddress': '02:00:00:00:00:00',
-        'X-PrivateKey': angelKey,
-        'Authorization': `Bearer ${angelJwt}`
-      }
-    });
-    const dData = await directRes.json();
-    if (dData.status && dData.data) {
-      state.angelRms = {
-        net: parseFloat(dData.data.net || 0),
-        available_cash: parseFloat(dData.data.availablecash || 0),
-        collateral: parseFloat(dData.data.collateral || 0)
-      };
-      updateApprovalModalFundsUI();
-      return state.angelRms;
-    }
-  } catch (err) {
-    console.warn('[SmartAPI] RMS fetch error:', err);
-  }
-  return null;
-}
-
-function updateApprovalModalFundsUI() {
-  const mode = state.executionMode || 'PAPER';
-  const cashLabel = document.getElementById('approval-cash-label');
-  const cashEl = document.getElementById('approval-modal-cash');
-  const buyingPowerBadge = document.getElementById('approval-modal-buying-power-badge');
-  const extraInfo = document.getElementById('approval-broker-extra-info');
-  const badge = document.getElementById('modal-engine-badge');
-  const footerBtn = document.getElementById('modal-approve-all-btn');
-
-  if (mode === 'REAL_BROKER') {
-    if (badge) {
-      badge.innerHTML = '⚡ <strong>LIVE ANGEL ONE</strong> (5X INTRADAY MIS · Demat Protected)';
-      badge.style.background = 'rgba(16,185,129,0.18)';
-      badge.style.color = '#10b981';
-      badge.style.border = '1px solid rgba(16,185,129,0.4)';
-    }
-    if (cashLabel) cashLabel.textContent = 'Angel One Cash:';
-
-    const rmsCash = state.angelRms ? Math.max(0, state.angelRms.net) : 0;
-    const buyingPower = rmsCash * INTRADAY_LEVERAGE;
-    if (cashEl) {
-      cashEl.textContent = `₹${rmsCash.toFixed(2)}`;
-      cashEl.className = rmsCash > 0 ? 'text-bullish' : 'text-bearish';
-    }
-    if (buyingPowerBadge) {
-      buyingPowerBadge.textContent = `⚡ 5x Buying Power: ₹${buyingPower.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-      buyingPowerBadge.style.display = 'inline-block';
-    }
-    if (extraInfo) {
-      if (rmsCash <= 0) {
-        extraInfo.innerHTML = `<span style="color:#f59e0b; font-weight:700;">⚠️ Broker Cash: ₹0.00. Add intraday margin in Angel One app for live trades</span>`;
-      } else {
-        extraInfo.innerHTML = `<span style="color:#10b981; font-weight:700;">🟢 Angel One Broker Connected · 5x MIS Enabled (₹${Math.round(rmsCash)} cash gives ₹${Math.round(buyingPower)} buying power)</span>`;
-      }
-    }
-    if (footerBtn) {
-      footerBtn.textContent = '⚡ Execute Real Trades on Angel One (5x MIS)';
-      footerBtn.className = 'btn btn-bullish btn-sm';
-    }
-  } else {
-    if (badge) {
-      badge.innerHTML = '🧪 <strong>PAPER TRADING</strong> (5X MIS Simulator)';
-      badge.style.background = 'rgba(0,229,255,0.15)';
-      badge.style.color = '#00e5ff';
-      badge.style.border = '1px solid rgba(0,229,255,0.3)';
-    }
-    if (cashLabel) cashLabel.textContent = 'Virtual Available Cash:';
-
-    const localPositions = JSON.parse(localStorage.getItem('stockai_open_positions') || '[]');
-    const localClosed = JSON.parse(localStorage.getItem('stockai_closed_positions') || '[]');
-    const initialBalance = 100000.0;
-    const realizedPnl = localClosed.reduce((acc, c) => acc + (c.realized_pnl || 0), 0);
-    const totalInvested = localPositions.reduce((acc, p) => acc + (p.margin_blocked || Math.round((p.entry_price * p.quantity / INTRADAY_LEVERAGE) * 100) / 100), 0);
-    const avail = Math.max(0, initialBalance + realizedPnl - totalInvested);
-    const bp = avail * INTRADAY_LEVERAGE;
-
-    if (cashEl) {
-      cashEl.textContent = `₹${Math.round(avail).toLocaleString('en-IN')}`;
-      cashEl.className = 'text-cyan';
-    }
-    if (buyingPowerBadge) {
-      buyingPowerBadge.textContent = `⚡ 5x Buying Power: ₹${Math.round(bp).toLocaleString('en-IN')}`;
-      buyingPowerBadge.style.display = 'inline-block';
-    }
-    if (extraInfo) {
-      extraInfo.innerHTML = `<span style="color:var(--text-muted);">Practice simulation funds · 5X MIS leverage active</span>`;
-    }
-    if (footerBtn) {
-      footerBtn.textContent = '✓ Deploy Virtual Trades (5x MIS)';
-      footerBtn.className = 'btn btn-bullish btn-sm';
-    }
-  }
-}
-
-function toggleDematExclusion(val) {
-  state.excludeDematHoldings = !!val;
-  localStorage.setItem('stockai_exclude_demat', state.excludeDematHoldings.toString());
-  if (state.excludeDematHoldings) {
-    showToast('🔒 Strict Demat Isolation ON: Bot will NEVER auto-trade stocks in your Demat portfolio!', 'success');
-  } else {
-    showToast('⚠️ Demat Isolation OFF: Bot may trade Demat stocks in INTRADAY MIS (Demat shares remain untouched).', 'info');
-  }
-}
-
-async function fetchAngelDematHoldings() {
-  const angelJwt = localStorage.getItem('stockai_angel_jwt');
-  const angelKey = localStorage.getItem('stockai_angel_key');
-  if (!angelJwt || !angelKey) return;
-
-  try {
-    // 1. Try Python backend first
-    try {
-      const res = await fetch(`${API_BASE}/api/broker/holdings`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.status && data.holdings) {
-          state.dematHoldings = data.holding_symbols || data.holdings.map(h => (h.tradingsymbol || '').replace('-EQ', '').trim()).filter(Boolean);
-          renderDematShieldUI(data.holdings);
-          return;
-        }
-      }
-    } catch (e) {}
-
-    // 2. Direct SmartAPI call from phone / APK
-    const directRes = await fetch('https://apiconnect.angelone.in/rest/secure/angelbroking/portfolio/v1/getAllHolding', {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'X-UserType': 'USER',
-        'X-SourceID': 'WEB',
-        'X-ClientLocalIP': '127.0.0.1',
-        'X-ClientPublicIP': '49.43.225.185',
-        'X-MACAddress': '02:00:00:00:00:00',
-        'X-PrivateKey': angelKey,
-        'Authorization': `Bearer ${angelJwt}`
-      }
-    });
-    const dData = await directRes.json();
-    if (dData.status && dData.data && dData.data.holdings) {
-      const holdings = dData.data.holdings;
-      state.dematHoldings = holdings.map(h => (h.tradingsymbol || '').replace('-EQ', '').trim()).filter(Boolean);
-      renderDematShieldUI(holdings);
-    }
-  } catch (err) {
-    console.warn('[SmartAPI] Failed to fetch Demat holdings:', err);
-  }
-}
-
-function renderDematShieldUI(holdings) {
-  const card = document.getElementById('demat-shield-card');
-  const chipsContainer = document.getElementById('demat-holdings-chips-container');
-  if (!chipsContainer) return;
-
-  if (state.executionMode === 'REAL_BROKER' && card) {
-    card.style.display = 'block';
-  }
-
-  if (!holdings || holdings.length === 0) {
-    chipsContainer.innerHTML = '<span style="font-size:0.75rem; color:var(--text-muted);">No Demat holdings found in Angel One account.</span>';
-    return;
-  }
-
-  chipsContainer.innerHTML = holdings.map(h => {
-    const sym = (h.tradingsymbol || '').replace('-EQ', '').trim();
-    if (!sym || sym === 'NSE') return '';
-    return `<span class="badge" style="background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.4); font-size:0.72rem; padding:3px 8px; display:inline-flex; align-items:center; gap:4px;">
-      🔒 <strong>${sym}</strong> <span style="font-size:0.65rem; opacity:0.8;">(Demat CNC Safe)</span>
-    </span>`;
-  }).filter(Boolean).join(' ');
-}
-
-function showAngelIpRegistrationModal(errorMsg) {
-  const ipMatch = errorMsg.match(/([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/);
-  const detectedIp = ipMatch ? ipMatch[1] : '49.43.225.185';
-
-  const modalHtml = `
-    <div id="angel-ip-help-modal" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); backdrop-filter:blur(6px); z-index:99999; display:flex; align-items:center; justify-content:center; padding:16px;">
-      <div style="background:#0f172a; border:2px solid #f59e0b; border-radius:16px; max-width:440px; width:100%; padding:20px; box-shadow:0 10px 40px rgba(0,0,0,0.8); color:#f8fafc;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <h3 style="margin:0; font-size:1.1rem; color:#f59e0b; display:flex; align-items:center; gap:8px;">
-            ⚠️ IP Registration Required
-          </h3>
-          <button onclick="document.getElementById('angel-ip-help-modal').remove()" style="background:none; border:none; color:#94a3b8; font-size:1.2rem; cursor:pointer;">✕</button>
-        </div>
-        <div style="margin-top:12px; font-size:0.85rem; line-height:1.5; color:#cbd5e1;">
-          <p style="margin:0 0 10px 0;">
-            Angel One rejected the order because your current Internet IP is not registered in your SmartAPI portal:
-          </p>
-          <div style="background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.4); border-radius:8px; padding:10px; font-family:monospace; font-size:0.88rem; color:#fef08a; text-align:center; font-weight:700;">
-            ${errorMsg}
-          </div>
-          <div style="margin-top:14px; font-size:0.82rem; background:rgba(255,255,255,0.05); padding:12px; border-radius:8px; border:1px solid rgba(255,255,255,0.1);">
-            <strong style="color:#38bdf8;">🔧 Quick 1-Minute Fix:</strong>
-            <ol style="margin:8px 0 0 0; padding-left:18px; line-height:1.7;">
-              <li>Log in to <strong><a href="https://smartapi.angelone.in" target="_blank" style="color:#00e5ff; text-decoration:underline;">smartapi.angelone.in</a></strong></li>
-              <li>Click your SmartAPI App</li>
-              <li>Under <strong>Static IP</strong>, enter: <code style="color:#10b981; font-weight:800; font-size:0.95rem; background:rgba(16,185,129,0.15); padding:2px 6px; border-radius:4px;">${detectedIp}</code></li>
-              <li>Click <strong>Save Changes</strong> & retry order!</li>
-            </ol>
-          </div>
-        </div>
-        <div style="margin-top:18px; display:flex; justify-content:flex-end;">
-          <button class="btn btn-bullish btn-sm" onclick="document.getElementById('angel-ip-help-modal').remove()" style="padding:6px 18px; font-weight:800;">
-            Got It
-          </button>
-        </div>
-      </div>
-    </div>
-  `;
-  const existing = document.getElementById('angel-ip-help-modal');
-  if (existing) existing.remove();
-  document.body.insertAdjacentHTML('beforeend', modalHtml);
-}
-
-let isAngelOrderInFlight = false;
-
-async function executeAngelLiveOrder(symbol, side, qty, price, sl, tp) {
-  if (isAngelOrderInFlight) {
-    showToast('⚠️ An order is currently being processed. Please wait...', 'warning');
-    return { success: false, message: 'Order submission in progress' };
-  }
-
-  const cleanSym = symbol.replace('.NS', '').replace('-EQ', '').toUpperCase();
-
-  // Strict Demat Exclusion Shield check:
-  if (state.excludeDematHoldings && state.dematHoldings.includes(cleanSym)) {
-    showToast(`🛡️ Demat Shield Block: ${cleanSym} is in your Demat portfolio! Order aborted to protect your delivery holdings.`, 'warning');
-    return { success: false, message: 'Stock protected in Demat' };
-  }
-
-  isAngelOrderInFlight = true;
-  const fullSym = `${cleanSym}.NS`;
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-    const res = await fetch(`${API_BASE}/api/broker/order`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        symbol: fullSym,
-        side: side,
-        quantity: qty,
-        price: price,
-        stop_loss: sl,
-        target_price: tp
-      }),
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data.status || data.success) {
-        showToast(`⚡ Angel One Order Placed! ID: ${data.order_id} (Product: INTRADAY - Demat Protected)`, 'success');
-        return { 
-          success: true, 
-          order_id: data.order_id,
-          sl_order_id: data.sl_order_id,
-          sl_placed: data.sl_placed,
-          sl_info: data.sl_info,
-          message: data.message
-        };
-      } else {
-        const msg = data.message || 'Broker rejected order';
-        const code = data.error_code || '';
-        if (code === 'AG7002' || msg.includes('registered IP')) {
-          showAngelIpRegistrationModal(msg);
-        } else {
-          showToast(`Angel One: ${msg}`, 'error');
-        }
-        return { success: false, message: msg, error_code: code };
-      }
-    } else {
-      const errText = await res.text();
-      showToast(`Server returned error: ${res.statusText}`, 'error');
-      return { success: false, message: errText || res.statusText };
-    }
-  } catch (e) {
-    const isTimeout = e.name === 'AbortError';
-    const msg = isTimeout ? 'Order timed out waiting for broker response. Check order book before retrying!' : `Network error: ${e.message}`;
-    showToast(`⚠️ ${msg}`, 'error');
-    return { success: false, message: msg };
-  } finally {
-    isAngelOrderInFlight = false;
-  }
-}
-
-function openAiTradeApprovalModal(candidates) {
-  state.pendingApprovalTrades = candidates;
-  const modal = document.getElementById('ai-trade-approval-modal');
-  if (!modal) return;
-
-  const countEl = document.getElementById('approval-modal-candidate-count');
-  if (countEl) countEl.textContent = candidates.length;
-
-  updateApprovalModalFundsUI();
-  fetchAngelRmsFunds();
-
-  renderApprovalCandidatesList(candidates);
-  modal.style.display = 'flex';
-}
-
-function closeAiTradeApprovalModal() {
-  const modal = document.getElementById('ai-trade-approval-modal');
-  if (modal) modal.style.display = 'none';
-}
-
-function renderApprovalCandidatesList(candidates) {
-  const container = document.getElementById('approval-candidates-list');
-  if (!container) return;
-
-  const sessionInfo = getMarketSessionInfo();
-
-  if (!candidates || candidates.length === 0) {
-    container.innerHTML = `
-      <div style="text-align:center; padding:60px 20px; color:var(--text-muted);">
-        <div style="font-size:3rem; margin-bottom:12px;">✅</div>
-        <div style="font-weight:800; font-size:1.15rem; color:#f8fafc;">All Trade Opportunities Processed!</div>
-        <div style="font-size:0.8rem; margin-top:6px; color:var(--text-secondary);">Tap 'Run AI Auto-Trade Scan' anytime to scan for fresh 15m breakout setups.</div>
-        <div style="margin-top:24px;">
-          <button class="btn btn-bullish" onclick="closeAiTradeApprovalModal(); switchTab('trading');" style="padding:10px 22px; font-weight:800; font-size:0.88rem;">
-            👉 View Active Portfolio
-          </button>
-        </div>
-      </div>
-    `;
-    return;
-  }
-
-  container.innerHTML = candidates.map((sig, idx) => {
-    const isBuy = !sig.action || !sig.action.includes('SELL');
-    const side = isBuy ? 'BUY' : 'SELL';
-    const sideColor = isBuy ? 'var(--color-bullish)' : 'var(--color-bearish)';
-    const sideBadgeCls = isBuy ? 'badge-buy' : 'badge-sell';
-    const cmp = Number(sig.price) || 1000;
-
-    // Leverage-aware capital allocation for default quantity
-    let availableCash = 100000;
-    if (state.executionMode === 'REAL_BROKER' && state.angelRms && state.angelRms.net > 0) {
-      availableCash = state.angelRms.net;
-    } else if (state.portfolio && state.portfolio.cash_balance !== undefined) {
-      availableCash = state.portfolio.cash_balance;
-    }
-
-    let defaultQty = 1;
-    if (availableCash <= 5000) {
-      const allocPower = (availableCash * INTRADAY_LEVERAGE) / Math.min(Math.max(candidates.length, 1), 2);
-      defaultQty = Math.max(1, Math.floor(allocPower / cmp));
-    } else {
-      defaultQty = Math.max(1, Math.floor(15000 / cmp));
-    }
-
-    const initialQty = Number(sig.qty) || defaultQty;
-    sig.qty = initialQty;
-    const defaultCost = Math.round(initialQty * cmp * 100) / 100;
-    const defaultMargin = Math.round((defaultCost / INTRADAY_LEVERAGE) * 100) / 100;
-    const vParams = getStockVolatilityParameters(sig.symbol, cmp);
-    const sl = sig.stop_loss || Math.round((cmp * (isBuy ? (1 - vParams.slPct) : (1 + vParams.slPct))) * 100) / 100;
-    const tp = sig.target_1 || Math.round((cmp * (isBuy ? (1 + vParams.tp1Pct) : (1 - vParams.tp1Pct))) * 100) / 100;
-    const slDist = Math.abs(Math.round(((sl - cmp) / cmp) * 1000) / 10);
-    const tpDist = Math.abs(Math.round(((tp - cmp) / cmp) * 1000) / 10);
-
-    const isLastHour = sessionInfo.isLastHour;
-    const cleanSym = sig.symbol.replace('.NS', '').replace('-EQ', '').toUpperCase();
-    const isDematHeld = (state.dematHoldings || []).includes(cleanSym);
-
-    return `
-      <div class="ai-setup-card ${isBuy ? 'buy-card' : 'sell-card'}" id="approval-card-${idx}">
-        <!-- Top Row: Symbol, Badge, LTP -->
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
-          <div>
-            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-              <span style="font-size:1.15rem; font-weight:800; color:#fff; letter-spacing:0.5px;">${cleanSym}</span>
-              <span class="badge ${sideBadgeCls}" style="font-size:0.72rem; font-weight:800; padding:3px 8px;">${sig.action || side}</span>
-              <span class="badge" style="background:rgba(0,229,255,0.15); color:#00e5ff; font-size:0.68rem; font-weight:700;">${sig.confidence || sig.conf || 88}% Conf</span>
-              ${state.executionMode === 'REAL_BROKER' ? `<span class="badge" style="background:rgba(16,185,129,0.18); color:#10b981; border:1px solid rgba(16,185,129,0.35); font-size:0.65rem;">⚡ ANGEL 5X MIS</span>` : `<span class="badge" style="background:rgba(0,229,255,0.15); color:#00e5ff; font-size:0.65rem;">🧪 PAPER</span>`}
-              ${isDematHeld ? `<span class="badge" style="background:rgba(16,185,129,0.2); color:#10b981; border:1px solid rgba(16,185,129,0.4); font-size:0.65rem;">🔒 Demat Protected</span>` : ''}
-            </div>
-            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:3px;">
-              ${sig.name || sig.company_name || 'NSE Equities'} · <span style="color:#38bdf8;">${sig.pattern || '15m High-Probability Breakout'}</span>
-            </div>
-          </div>
-          <div style="text-align:right;">
-            <div style="font-size:1.15rem; font-weight:800; font-family:var(--font-mono); color:${sideColor};">
-              ₹${cmp.toFixed(2)}
-            </div>
-            <div style="font-size:0.68rem; color:var(--text-muted);">Current Market LTP</div>
-          </div>
-        </div>
-
-        <!-- 3-Box Value Grid: Entry Price, Stop Loss, Target -->
-        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; margin-top:12px;">
-          <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.09); border-radius:8px; padding:8px 10px;">
-            <label style="font-size:0.68rem; color:var(--text-muted); font-weight:700; display:block; margin-bottom:3px;">Entry Price (₹)</label>
-            <input type="number" step="0.05" id="approval-price-input-${idx}" value="${cmp.toFixed(2)}" style="width:100%; padding:6px; font-weight:800; font-family:var(--font-mono); font-size:0.85rem; background:rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.18); border-radius:6px; color:#fff;" oninput="updateApprovalCandidateCustomValues(${idx})">
-          </div>
-          <div style="background:rgba(239,68,68,0.06); border:1px solid rgba(239,68,68,0.25); border-radius:8px; padding:8px 10px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
-              <label style="font-size:0.68rem; color:#ef4444; font-weight:700;">🛑 Stop Loss</label>
-              <span id="approval-sl-pct-${idx}" style="font-size:0.65rem; color:#ef4444; font-weight:700;">-${slDist}%</span>
-            </div>
-            <input type="number" step="0.05" id="approval-sl-input-${idx}" value="${sl}" style="width:100%; padding:6px; font-weight:800; font-family:var(--font-mono); font-size:0.85rem; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); border-radius:6px; color:#ef4444;" oninput="updateApprovalCandidateCustomValues(${idx})">
-          </div>
-          <div style="background:rgba(16,185,129,0.06); border:1px solid rgba(16,185,129,0.25); border-radius:8px; padding:8px 10px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
-              <label style="font-size:0.68rem; color:#10b981; font-weight:700;">🎯 Target</label>
-              <span id="approval-tp-pct-${idx}" style="font-size:0.65rem; color:#10b981; font-weight:700;">+${tpDist}%</span>
-            </div>
-            <input type="number" step="0.05" id="approval-tp-input-${idx}" value="${tp}" style="width:100%; padding:6px; font-weight:800; font-family:var(--font-mono); font-size:0.85rem; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.4); border-radius:6px; color:#10b981;" oninput="updateApprovalCandidateCustomValues(${idx})">
-          </div>
-        </div>
-
-        <!-- Quantity Controls & 5x Margin Display -->
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; padding:10px 12px; background:rgba(0,0,0,0.3); border-radius:8px; flex-wrap:wrap; gap:8px;">
-          <div style="display:flex; align-items:center; gap:6px;">
-            <span style="font-size:0.75rem; color:var(--text-muted); font-weight:700;">Quantity:</span>
-            <button class="btn btn-outline btn-sm" style="padding:4px 10px; font-size:0.9rem; font-weight:800; min-width:32px;" onclick="adjustApprovalCandidateQty(${idx}, -1)">−</button>
-            <input type="number" id="approval-qty-input-${idx}" min="1" max="5000" value="${initialQty}" style="width:65px; text-align:center; padding:5px; font-size:0.9rem; font-weight:800; background:rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.2); border-radius:6px; color:#fff;" oninput="updateApprovalCandidateCustomValues(${idx})">
-            <button class="btn btn-outline btn-sm" style="padding:4px 10px; font-size:0.9rem; font-weight:800; min-width:32px;" onclick="adjustApprovalCandidateQty(${idx}, 1)">+</button>
-            <span class="badge" style="background:rgba(16,185,129,0.18); color:#10b981; border:1px solid rgba(16,185,129,0.35); font-size:0.65rem; font-weight:800; margin-left:4px;">⚡ 5X MIS</span>
-          </div>
-          <div style="text-align:right;">
-            <div>
-              <span style="color:var(--text-muted); font-size:0.72rem;">5x Margin Required:</span>
-              <strong id="approval-margin-val-${idx}" style="color:#10b981; font-family:var(--font-mono); margin-left:4px; font-size:0.9rem;">₹${defaultMargin.toLocaleString('en-IN')}</strong>
-            </div>
-            <div style="font-size:0.68rem; color:var(--text-muted); margin-top:2px;">
-              <span>Total Value: <span id="approval-orderval-${idx}" style="font-family:var(--font-mono); color:#cbd5e1;">₹${defaultCost.toLocaleString('en-IN')}</span></span>
-              <span id="approval-rrr-${idx}" style="margin-left:6px; color:var(--text-muted);">RRR 1:${(tpDist/Math.max(slDist,0.1)).toFixed(1)}</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Action Buttons -->
-        <div style="display:flex; justify-content:flex-end; align-items:center; gap:10px; margin-top:12px; border-top:1px solid rgba(255,255,255,0.06); padding-top:10px;">
-          <button class="btn btn-outline btn-sm" style="font-size:0.78rem; padding:6px 14px; color:var(--text-muted);" onclick="rejectApprovalCandidate(${idx})">
-            ✕ Skip
-          </button>
-          <button class="btn ${isBuy ? 'btn-bullish' : 'btn-bearish'} btn-sm" style="font-size:0.82rem; font-weight:800; padding:6px 18px;" onclick="approveSingleCandidate(${idx})">
-            ${state.executionMode === 'REAL_BROKER' ? `⚡ Execute ${side} (5x MIS)` : `✓ Place ${side}`}
-          </button>
-        </div>
-      </div>
-    `;
-  }).join('');
-}
-
-function adjustApprovalCandidateQty(idx, delta) {
-  const input = document.getElementById(`approval-qty-input-${idx}`);
-  if (!input) return;
-  let val = Math.max(1, (parseInt(input.value) || 1) + delta);
-  input.value = val;
-  updateApprovalCandidateCustomValues(idx);
-}
-
-function updateApprovalCandidateCustomValues(idx) {
-  if (!state.pendingApprovalTrades || !state.pendingApprovalTrades[idx]) return;
-  const sig = state.pendingApprovalTrades[idx];
-  const priceInput = document.getElementById(`approval-price-input-${idx}`);
-  const slInput = document.getElementById(`approval-sl-input-${idx}`);
-  const tpInput = document.getElementById(`approval-tp-input-${idx}`);
-  const qtyInput = document.getElementById(`approval-qty-input-${idx}`);
-  const marginEl = document.getElementById(`approval-margin-val-${idx}`);
-  const slPctEl = document.getElementById(`approval-sl-pct-${idx}`);
-  const tpPctEl = document.getElementById(`approval-tp-pct-${idx}`);
-  const rrrEl = document.getElementById(`approval-rrr-${idx}`);
-
-  const price = priceInput ? parseFloat(priceInput.value) || sig.price : sig.price;
-  const sl = slInput ? parseFloat(slInput.value) || sig.stop_loss : sig.stop_loss;
-  const tp = tpInput ? parseFloat(tpInput.value) || sig.target_1 : sig.target_1;
-  const qty = qtyInput ? Math.max(1, parseInt(qtyInput.value) || 1) : (sig.qty || 1);
-
-  sig.price = price;
-  sig.stop_loss = sl;
-  sig.target_1 = tp;
-  sig.qty = qty;
-
-  const cost = Math.round(qty * price * 100) / 100;
-  const marginReq = Math.round((cost / INTRADAY_LEVERAGE) * 100) / 100;
-  if (marginEl) marginEl.textContent = `₹${marginReq.toLocaleString('en-IN')}`;
-  const orderValEl = document.getElementById(`approval-orderval-${idx}`);
-  if (orderValEl) orderValEl.textContent = `₹${cost.toLocaleString('en-IN')}`;
-
-  const slDist = Math.abs(Math.round(((sl - price) / price) * 1000) / 10);
-  const tpDist = Math.abs(Math.round(((tp - price) / price) * 1000) / 10);
-  if (slPctEl) slPctEl.textContent = `-${slDist}% SL`;
-  if (tpPctEl) tpPctEl.textContent = `+${tpDist}% TP`;
-  if (rrrEl) rrrEl.textContent = `RRR 1:${(tpDist / Math.max(slDist, 0.1)).toFixed(1)}`;
-}
-
-async function approveSingleCandidate(idx) {
-  if (!state.pendingApprovalTrades || !state.pendingApprovalTrades[idx]) return;
-  const sig = state.pendingApprovalTrades[idx];
-  const priceInput = document.getElementById(`approval-price-input-${idx}`);
-  const slInput = document.getElementById(`approval-sl-input-${idx}`);
-  const tpInput = document.getElementById(`approval-tp-input-${idx}`);
-  const qtyInput = document.getElementById(`approval-qty-input-${idx}`);
-
-  const customPrice = priceInput ? parseFloat(priceInput.value) || sig.price : sig.price;
-  const customSl = slInput ? parseFloat(slInput.value) || sig.stop_loss : sig.stop_loss;
-  const customTp = tpInput ? parseFloat(tpInput.value) || sig.target_1 : sig.target_1;
-  const customQty = qtyInput ? Math.max(1, parseInt(qtyInput.value) || 1) : (sig.qty || 5);
-
-  sig.price = customPrice;
-  sig.stop_loss = customSl;
-  sig.target_1 = customTp;
-  sig.qty = customQty;
-
-  const ok = await executeTradeWithCustomQty(sig, customQty, customPrice, customSl, customTp);
-  if (!ok) return;
-
-  const approvedSym = sig.symbol.replace('.NS', '');
-  state.pendingApprovalTrades.splice(idx, 1);
-  renderApprovalCandidatesList(state.pendingApprovalTrades);
-  const countEl = document.getElementById('approval-modal-candidate-count');
-  if (countEl) countEl.textContent = state.pendingApprovalTrades.length;
-
-  if (state.pendingApprovalTrades.length === 0) {
-    setTimeout(() => {
-      closeAiTradeApprovalModal();
-      switchTab('trading');
-      showToast(`🎉 All approved trades deployed! View your active positions below.`, 'success');
-    }, 600);
-  }
-}
-
-function rejectApprovalCandidate(idx) {
-  if (!state.pendingApprovalTrades || !state.pendingApprovalTrades[idx]) return;
-  const sym = state.pendingApprovalTrades[idx].symbol;
-  state.pendingApprovalTrades.splice(idx, 1);
-  showToast(`Skipped ${sym.replace('.NS', '')}`, 'info');
-  renderApprovalCandidatesList(state.pendingApprovalTrades);
-  const countEl = document.getElementById('approval-modal-candidate-count');
-  if (countEl) countEl.textContent = state.pendingApprovalTrades.length;
-
-  if (state.pendingApprovalTrades.length === 0) {
-    setTimeout(closeAiTradeApprovalModal, 800);
-  }
-}
-
-async function approveAllCandidateTrades() {
-  if (!state.pendingApprovalTrades || state.pendingApprovalTrades.length === 0) return;
-
-  if (state.executionMode === 'REAL_BROKER') {
-    const ok = confirm(`⚡ EXECUTE REAL TRADES ON ANGEL ONE?\n\nThis will send ${state.pendingApprovalTrades.length} orders to your Angel One account as INTRADAY (MIS).\nYour Demat delivery holdings will NOT be touched.\n\nProceed?`);
-    if (!ok) return;
-  }
-
-  const toExecute = [...state.pendingApprovalTrades];
-  let count = 0;
-  for (let idx = 0; idx < toExecute.length; idx++) {
-    const sig = toExecute[idx];
-    const priceInput = document.getElementById(`approval-price-input-${idx}`);
-    const slInput = document.getElementById(`approval-sl-input-${idx}`);
-    const tpInput = document.getElementById(`approval-tp-input-${idx}`);
-    const qtyInput = document.getElementById(`approval-qty-input-${idx}`);
-
-    const customPrice = priceInput ? parseFloat(priceInput.value) || sig.price : sig.price;
-    const customSl = slInput ? parseFloat(slInput.value) || sig.stop_loss : sig.stop_loss;
-    const customTp = tpInput ? parseFloat(tpInput.value) || sig.target_1 : sig.target_1;
-    const customQty = qtyInput ? Math.max(1, parseInt(qtyInput.value) || 1) : (sig.qty || 5);
-
-    const ok = await executeTradeWithCustomQty(sig, customQty, customPrice, customSl, customTp);
-    if (ok) count++;
-  }
-  state.pendingApprovalTrades = [];
-  closeAiTradeApprovalModal();
-  switchTab('trading');
-  showToast(`Processed ${count} trades on ${state.executionMode === 'REAL_BROKER' ? 'Angel One' : 'virtual portfolio'}!`, 'success');
-  loadPortfolio();
-}
-
-async function executeTradeWithCustomQty(sig, qty, customPrice, customSl, customTp) {
-  const sym = sig.symbol;
-  const cmp = customPrice !== undefined ? Number(customPrice) : (Number(sig.price) || 1000);
-  const isBuy = !sig.action || !sig.action.includes('SELL');
-  const side = isBuy ? 'BUY' : 'SELL';
-  const vParams = getStockVolatilityParameters(sym, cmp);
-  const tpGain = sig.tpPct || vParams.tp1Pct;
-  const slRisk = sig.slPct || vParams.slPct;
-  const tp = customTp !== undefined ? Number(customTp) : (sig.target_1 || Math.round((cmp * (side === 'BUY' ? (1 + tpGain) : (1 - tpGain))) * 100) / 100);
-  const sl = customSl !== undefined ? Number(customSl) : (sig.stop_loss || Math.round((cmp * (side === 'BUY' ? (1 - slRisk) : (1 + slRisk))) * 100) / 100);
-  const orderValue = Math.round(qty * cmp * 100) / 100;
-  const marginRequired = Math.round((orderValue / INTRADAY_LEVERAGE) * 100) / 100;
-
-  // Real Angel One Broker execution if in REAL_BROKER mode
-  if (state.executionMode === 'REAL_BROKER') {
-    const cleanSym = sym.replace('.NS', '').replace('-EQ', '').toUpperCase();
-    if (state.excludeDematHoldings && state.dematHoldings.includes(cleanSym)) {
-      showToast(`🛡️ Skipped ${cleanSym}: Held in Demat (Protected by Demat Shield)`, 'info');
-      return false;
-    }
-
-    if (state.angelRms && state.angelRms.net > 0 && state.angelRms.net < marginRequired) {
-      showToast(`Insufficient Angel One margin for ${sym.replace('.NS', '')} (5x Margin Needed: ₹${Math.round(marginRequired).toLocaleString()}, Cash Available: ₹${Math.round(state.angelRms.net).toLocaleString()}). Try lowering quantity!`, 'error');
-      return false;
-    }
-
-    const brokerRes = await executeAngelLiveOrder(sym, side, qty, cmp, sl, tp);
-    if (!brokerRes || !brokerRes.success) {
-      // Order was NOT placed on Angel One (e.g. IP not whitelisted or broker error)
-      return false;
-    }
-
-    // Register active real position so user can track it, monitor SL/TP, and square off safely
-    const localPositions = JSON.parse(localStorage.getItem('stockai_open_positions') || '[]');
-    const newRealPos = {
-      id: Date.now() + Math.floor(Math.random() * 10000),
-      order_id: brokerRes.order_id,
-      sl_order_id: brokerRes.sl_order_id,
-      symbol: sym,
-      company_name: sig.name || sig.company_name || sym.replace('.NS', ''),
-      sector: sig.sector || 'NSE Equities',
-      side: side,
-      quantity: qty,
-      entry_price: cmp,
-      current_price: cmp,
-      anchor_price: cmp,
-      margin_blocked: marginRequired,
-      order_value: orderValue,
-      leverage: INTRADAY_LEVERAGE,
-      product_type: "INTRADAY",
-      is_real: true,
-      unrealized_pnl: 0.0,
-      unrealized_pnl_pct: 0.0,
-      stop_loss: sl,
-      target_price: tp,
-      trade_type: "REAL_BROKER_ORDER",
-      ai_confidence: sig.confidence || sig.conf || 86,
-      notes: brokerRes.sl_info || "ANGEL_ONE_LIVE_MIS",
-      ai_reasons: sig.rationale || (sig.reasons ? sig.reasons[0] : "Angel One Live Execution")
-    };
-    localPositions.unshift(newRealPos);
-    localStorage.setItem('stockai_open_positions', JSON.stringify(localPositions));
-
-    fetchAngelRmsFunds();
-    loadPortfolio();
-    return true;
-  }
-
-  // Virtual Paper Trading Branch (Only when executionMode is PAPER)
-  const localPositions = JSON.parse(localStorage.getItem('stockai_open_positions') || '[]');
-  const localClosed = JSON.parse(localStorage.getItem('stockai_closed_positions') || '[]');
-  const initialBalance = 100000.0;
-  const realizedPnl = localClosed.reduce((acc, c) => acc + (c.realized_pnl || 0), 0);
-  let totalInvested = localPositions.reduce((acc, p) => acc + (p.margin_blocked || Math.round((p.entry_price * p.quantity / INTRADAY_LEVERAGE) * 100) / 100), 0);
-  let availableCash = Math.max(0, initialBalance + realizedPnl - totalInvested);
-
-  if (availableCash < marginRequired) {
-    showToast(`Insufficient funds for ${sym.replace('.NS', '')} (5x Margin Needed: ₹${Math.round(marginRequired).toLocaleString()}, Available: ₹${Math.round(availableCash).toLocaleString()}). Try lowering quantity!`, 'error');
-    return false;
-  }
-
-  availableCash = Math.max(0, availableCash - marginRequired);
-  localStorage.setItem('stockai_cash', availableCash.toString());
-
-  const newPos = {
-    id: Date.now() + Math.floor(Math.random() * 10000),
-    symbol: sym,
-    company_name: sig.name || sig.company_name || sym.replace('.NS', ''),
-    sector: sig.sector || 'NSE Equities',
-    side: side,
-    quantity: qty,
-    entry_price: cmp,
-    current_price: cmp,
-    anchor_price: cmp,
-    margin_blocked: marginRequired,
-    order_value: orderValue,
-    leverage: INTRADAY_LEVERAGE,
-    product_type: "INTRADAY",
-    unrealized_pnl: 0.0,
-    unrealized_pnl_pct: 0.0,
-    stop_loss: sl,
-    target_price: tp,
-    trade_type: "AI_USER_APPROVED",
-    ai_confidence: sig.confidence || sig.conf || 86,
-    notes: "USER_APPROVED_RUNNER",
-    ai_reasons: sig.rationale || (sig.reasons ? sig.reasons[0] : "User Approved 15m Trend Aligned")
-  };
-
-  localPositions.unshift(newPos);
-  localStorage.setItem('stockai_open_positions', JSON.stringify(localPositions));
-
-  // Sync immediately to in-memory state so real-time price tick loop doesn't overwrite
-  if (state.portfolio) {
-    if (!state.portfolio.open_positions) state.portfolio.open_positions = [];
-    state.portfolio.open_positions.unshift(newPos);
-    state.portfolio.cash_balance = availableCash;
-    state.portfolio.total_invested = (state.portfolio.total_invested || 0) + marginRequired;
-    renderPortfolioUI(state.portfolio);
-  }
-
-  // Also submit to backend API in parallel if reachable
-  fetch(`${API_BASE}/api/paper/order`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      symbol: sym,
-      side: side,
-      quantity: qty,
-      price: cmp,
-      stop_loss: sl,
-      target_price: tp,
-      company_name: newPos.company_name,
-      trade_type: "AI_USER_APPROVED",
-      ai_confidence: newPos.ai_confidence,
-      ai_reasons: newPos.ai_reasons
-    })
-  }).catch(() => {});
-
-  showToast(`✅ Executed (🧪 Virtual 5x MIS): ${side} ${qty} shares of ${sym.replace('.NS', '')} at ₹${cmp.toFixed(2)}! Added to Portfolio.`, 'success');
-  loadPortfolio();
-  return true;
-}
-
-// Autonomous AI Auto-Trader: Scans market, calculates SL & Target, and executes or requests approval
-async function scanLiveMarketMoversClientSide() {
-  const UNIVERSE = [
-    { symbol: "DATAPATTNS.NS", name: "Data Patterns", sector: "Defence" },
-    { symbol: "MANKIND.NS", name: "Mankind Pharma", sector: "Pharma" },
-    { symbol: "TATACONSUM.NS", name: "Tata Consumer Products", sector: "FMCG" },
-    { symbol: "POWERINDIA.NS", name: "Hitachi Energy India", sector: "Capital Goods" },
-    { symbol: "DIVISLAB.NS", name: "Divi's Laboratories", sector: "Pharma" },
-    { symbol: "ADANIENSOL.NS", name: "Adani Energy Solutions", sector: "Energy" },
-    { symbol: "TMCV.NS", name: "Tata Motors CV", sector: "Automobile" },
-    { symbol: "CUMMINSIND.NS", name: "Cummins India", sector: "Capital Goods" },
-    { symbol: "ENRIN.NS", name: "Siemens Energy India", sector: "Capital Goods" },
-    { symbol: "BHARTIARTL.NS", name: "Bharti Airtel", sector: "Telecom" },
-    { symbol: "BAJAJ-AUTO.NS", name: "Bajaj Auto", sector: "Automobile" },
-    { symbol: "MAZDOCK.NS", name: "Mazagon Dock Shipbuilders", sector: "Defence" },
-    { symbol: "AMBUJACEM.NS", name: "Ambuja Cements", sector: "Materials" },
-    { symbol: "RECLTD.NS", name: "REC Limited", sector: "Finance" },
-    { symbol: "BDL.NS", name: "Bharat Dynamics", sector: "Defence" },
-    { symbol: "ASIANPAINT.NS", name: "Asian Paints", sector: "Consumer" },
-    { symbol: "PIDILITIND.NS", name: "Pidilite Industries", sector: "Chemicals" },
-    { symbol: "COALINDIA.NS", name: "Coal India", sector: "Mining" },
-    { symbol: "GRASIM.NS", name: "Grasim Industries", sector: "Materials" },
-    { symbol: "SBIN.NS", name: "State Bank of India", sector: "Banking" },
-    { symbol: "GAIL.NS", name: "GAIL India", sector: "Energy" },
-    { symbol: "TCS.NS", name: "Tata Consultancy Services", sector: "IT" },
-    { symbol: "HAL.NS", name: "Hindustan Aeronautics", sector: "Defence" },
-    { symbol: "RELIANCE.NS", name: "Reliance Industries", sector: "Energy" },
-    { symbol: "INFY.NS", name: "Infosys", sector: "IT" },
-    { symbol: "HDFCBANK.NS", name: "HDFC Bank", sector: "Banking" },
-    { symbol: "ZOMATO.NS", name: "Zomato Ltd", sector: "Midcap" },
-    { symbol: "TATAPOWER.NS", name: "Tata Power", sector: "Energy" }
-  ];
-
-  const fetchPromises = UNIVERSE.map(async item => {
-    try {
-      let cmp = 0;
-      let prevClose = 0;
-      let pct = 0;
-
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${item.symbol}?interval=15m&range=2d`;
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
-      const res = await fetch(url, { signal: controller.signal });
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const json = await res.json();
-        const meta = json?.chart?.result?.[0]?.meta;
-        if (meta) {
-          cmp = Number(meta.regularMarketPrice || meta.chartPreviousClose || 0);
-          prevClose = Number(meta.chartPreviousClose || meta.previousClose || cmp);
-          pct = prevClose ? Math.round(((cmp - prevClose) / prevClose) * 10000) / 100 : 0.0;
-        }
-      }
-
-      if (!cmp && state.latestLivePrices && state.latestLivePrices[item.symbol]) {
-        cmp = Number(state.latestLivePrices[item.symbol]);
-      }
-
-      if (cmp > 0) {
-        return {
-          symbol: item.symbol,
-          name: item.name,
-          sector: item.sector,
-          price: cmp,
-          changePct: pct
-        };
-      }
-      return null;
-    } catch (e) {
-      return null;
-    }
-  });
-
-  const results = await Promise.allSettled(fetchPromises);
-  const quotes = results
-    .filter(r => r.status === 'fulfilled' && r.value !== null)
-    .map(r => r.value);
-
-  if (quotes.length === 0) return [];
-
-  // Sort into Gainers and Losers
-  const gainers = quotes.filter(q => q.changePct > 0).sort((a, b) => b.changePct - a.changePct);
-  const losers = quotes.filter(q => q.changePct < 0).sort((a, b) => a.changePct - b.changePct);
-
-  const setups = [];
-
-  // Top Gainers -> BUY Setups
-  gainers.slice(0, 4).forEach(g => {
-    const cmp = g.price;
-    const pct = g.changePct;
-    const tpGain = Math.max(0.018, Math.min(0.040, Math.abs(pct) * 0.35));
-    const slRisk = 0.012;
-    setups.push({
-      symbol: g.symbol,
-      name: g.name,
-      sector: g.sector,
-      price: cmp,
-      change_pct: pct,
-      action: "BUY",
-      confidence: Math.min(94, Math.round(84 + Math.min(pct, 5.0) * 2)),
-      pattern: `Bullish Breakout (+${pct.toFixed(2)}%)`,
-      target_1: Math.round(cmp * (1 + tpGain) * 100) / 100,
-      target_2: Math.round(cmp * (1 + tpGain * 1.5) * 100) / 100,
-      stop_loss: Math.round(cmp * (1 - slRisk) * 100) / 100,
-      risk_reward_ratio: `1:${(tpGain / slRisk).toFixed(1)}`,
-      rationale: `NSE Top Gainer (+${pct.toFixed(2)}%); heavy buyer volume breaking above 15m VWAP & 21 EMA.`
-    });
-  });
-
-  // Top Losers -> SELL Setups (Intraday Short MIS)
-  losers.slice(0, 4).forEach(l => {
-    const cmp = l.price;
-    const pct = l.changePct;
-    const tpDrop = Math.max(0.018, Math.min(0.040, Math.abs(pct) * 0.35));
-    const slRisk = 0.012;
-    setups.push({
-      symbol: l.symbol,
-      name: l.name,
-      sector: l.sector,
-      price: cmp,
-      change_pct: pct,
-      action: "SELL",
-      confidence: Math.min(92, Math.round(83 + Math.min(Math.abs(pct), 5.0) * 1.8)),
-      pattern: `Bearish Breakdown (${pct.toFixed(2)}%)`,
-      target_1: Math.round(cmp * (1 - tpDrop) * 100) / 100,
-      target_2: Math.round(cmp * (1 - tpDrop * 1.5) * 100) / 100,
-      stop_loss: Math.round(cmp * (1 + slRisk) * 100) / 100,
-      risk_reward_ratio: `1:${(tpDrop / slRisk).toFixed(1)}`,
-      rationale: `NSE Top Loser (${pct.toFixed(2)}%); institutional selling breakdown below 15m VWAP & 200 EMA.`
-    });
-  });
-
-  return setups;
-}
-
-async function triggerPreMarketPlan() {
-  const btn = document.getElementById('btn-pre-market-radar');
-  if (btn) btn.textContent = '⏳ Analyzing Pre-Market...';
-  showToast('🌅 Running Pre-Market Predictive Engine (Evaluating Daily Structures, 20 EMA, & Volume Accumulation)...', 'info');
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
-    const res = await fetch(`${API_BASE}/api/ai/pre-market-plan`, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.plan && data.plan.length > 0) {
-        if (btn) btn.textContent = '🌅 Pre-Market Radar';
-        openAiTradeApprovalModal(data.plan);
-        showToast(`🌅 Pre-Market Battle-Plan Ready: Found ${data.plan.length} Buy & Sell opening trigger setups!`, 'success');
-        return;
-      }
-    }
-  } catch (e) {
-    console.warn('Pre-market API error:', e);
-  }
-
-  // Client-side fallback: run live movers scanner which provides genuine market triggers
-  const candidates = await scanLiveMarketMoversClientSide();
-  if (btn) btn.textContent = '🌅 Pre-Market Radar';
-  if (candidates && candidates.length > 0) {
-    openAiTradeApprovalModal(candidates);
-    showToast(`🌅 Pre-Market Analysis Complete: ${candidates.length} stocks primed for opening breakout/breakdown!`, 'success');
-  } else {
-    showToast('Unable to fetch pre-market setups. Check internet connection.', 'error');
-  }
-}
-
-async function triggerAiAutoTradeNow() {
-  const btn = document.getElementById('btn-trigger-ai-trade');
-
-  const sessionInfo = getMarketSessionInfo();
-  if (sessionInfo.session === 'OFF_MARKET') {
-    showToast('⏱️ Off-Market Hours (Post 03:30 PM). Running AI scan on today\'s final market closing movers!', 'info');
-  }
-
-  if (sessionInfo.isLastHour) {
-    showToast('⚠️ Caution: High-chop EOD Auto-Squareoff Window (after 02:30 PM). Use conservative quantities!', 'info');
-  }
-
-  if (btn) btn.textContent = '⏳ AI Scanning Live Dalal Street Movers...';
-
-  let candidates = [];
-
-  // 1. Fetch genuine live Top Gainers & Losers from Backend
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4500);
-    const res = await fetch(`${API_BASE}/api/ai/live-movers-scan`, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.movers && data.movers.length > 0) {
-        candidates = data.movers;
-      }
-    }
-  } catch (err) {
-    console.warn('Backend live movers scan failed, running client-side real-time scanner:', err);
-  }
-
-  // 2. Client-side Real-time Scanner Fallback (Zero dummy data, scans live quotes directly!)
-  if (!candidates || candidates.length === 0) {
-    candidates = await scanLiveMarketMoversClientSide();
-  }
-
-  // Sync latest live prices to state
-  candidates.forEach(item => {
-    if (item.price > 0) {
-      if (!state.latestLivePrices) state.latestLivePrices = {};
-      state.latestLivePrices[item.symbol] = item.price;
-    }
-  });
-
-  const localPositions = JSON.parse(localStorage.getItem('stockai_open_positions') || '[]');
-  // Filter out any stocks already open
-  candidates = candidates.filter(sig => !localPositions.some(p => p.symbol === sig.symbol));
-
-  // Filter against AI Mistake Memory (Active Loss Safeguards)
-  let blockedByLearning = 0;
-  candidates = candidates.filter(sig => {
-    const check = checkAiMistakeSafeguard(sig);
-    if (check.blocked) {
-      blockedByLearning++;
-      return false;
-    }
-    return true;
-  });
-
-  if (blockedByLearning > 0) {
-    showToast(`🧠 AI Mistake Safeguard: Filtered out ${blockedByLearning} setup(s) to avoid repeating recent loss traps!`, 'info');
-  }
-
-  // Strict Demat Holding Protection Shield Filter
-  if (state.excludeDematHoldings && state.dematHoldings && state.dematHoldings.length > 0) {
-    const origCount = candidates.length;
-    candidates = candidates.filter(sig => {
-      const clean = sig.symbol.replace('.NS', '').replace('-EQ', '').toUpperCase();
-      return !state.dematHoldings.includes(clean);
-    });
-    const skippedDemat = origCount - candidates.length;
-    if (skippedDemat > 0) {
-      showToast(`🛡️ Demat Holding Protection Shield: Skipped ${skippedDemat} stock(s) currently held in your Demat portfolio!`, 'info');
-    }
-  }
-
-  if (candidates.length === 0) {
-    showToast('All recommended stock setups are already active in your portfolio!', 'info');
-    if (btn) btn.textContent = '⚡ Run AI Auto-Trade Scan';
-    return;
-  }
-
-  // Check execution mode: APPROVAL (Default) vs FULL_AUTO
-  const mode = state.aiTradeMode || 'APPROVAL';
-
-  if (mode === 'APPROVAL') {
-    if (btn) btn.textContent = '⚡ Run AI Auto-Trade Scan';
-    openAiTradeApprovalModal(candidates);
-    showToast(`🛡️ AI found ${candidates.length} trade opportunities. Review & approve your preferred stocks & quantities!`, 'info');
-    return;
-  }
-
-  // --- FULL AUTO EXECUTION MODE ---
-  const localClosed = JSON.parse(localStorage.getItem('stockai_closed_positions') || '[]');
-  const initialBalance = 100000.0;
-  const realizedPnl = localClosed.reduce((acc, c) => acc + (c.realized_pnl || 0), 0);
-  let totalInvested = localPositions.reduce((acc, p) => acc + (p.margin_blocked || Math.round((p.entry_price * p.quantity / INTRADAY_LEVERAGE) * 100) / 100), 0);
-  let availableCash = Math.max(0, initialBalance + realizedPnl - totalInvested);
-  let executedCount = 0;
-  const maxAllowedPositions = 6;
-
-  for (const sig of candidates) {
-    if (localPositions.length >= maxAllowedPositions || availableCash < 1500) break;
-    const sym = sig.symbol;
-    if (sym.startsWith('^')) continue; // Strict index exclusion
-    if (localPositions.some(p => p.symbol === sym)) continue; // Don't duplicate
-
-    const cmp = Number(sig.price) || 1000;
-    // Allocate ~₹15,000 order value per trade with 5x leverage (~₹3,000 margin)
-    const qty = Math.max(2, Math.floor(15000 / cmp));
-    const cost = qty * cmp;
-    const marginReq = Math.round((cost / INTRADAY_LEVERAGE) * 100) / 100;
-
-    if (availableCash >= marginReq) {
-      availableCash -= marginReq;
-      totalInvested += marginReq;
-
-      const vParams = getStockVolatilityParameters(sym, cmp);
-      const tpGain = sig.tpPct || vParams.tp1Pct;
-      const slRisk = sig.slPct || vParams.slPct;
-      const side = sig.action && sig.action.includes('SELL') ? 'SELL' : (sig.side || 'BUY');
-      
-      const tp = sig.target_1 || Math.round((cmp * (side === 'BUY' ? (1 + tpGain) : (1 - tpGain))) * 100) / 100;
-      const sl = sig.stop_loss || Math.round((cmp * (side === 'BUY' ? (1 - slRisk) : (1 + slRisk))) * 100) / 100;
-
-      localPositions.unshift({
-        id: Date.now() + Math.floor(Math.random() * 10000),
-        symbol: sym,
-        company_name: sig.name || sym.replace('.NS', ''),
-        sector: sig.sector || 'NSE Equities',
-        side: side,
-        quantity: qty,
-        entry_price: cmp,
-        current_price: cmp,
-        anchor_price: cmp,
-        margin_blocked: marginReq,
-        order_value: cost,
-        leverage: INTRADAY_LEVERAGE,
-        product_type: "INTRADAY",
-        unrealized_pnl: 0.0,
-        unrealized_pnl_pct: 0.0,
-        stop_loss: sl,
-        target_price: tp,
-        trade_type: "AI_AUTONOMOUS",
-        ai_confidence: sig.confidence || sig.conf || 86,
-        notes: "ACTIVE_RUNNER",
-        ai_reasons: sig.rationale || (sig.reasons ? sig.reasons.join('; ') : "Multi-Timeframe Trend Aligned")
-      });
-      executedCount++;
-    }
-  }
-
-  if (executedCount > 0) {
-    localStorage.setItem('stockai_cash', availableCash.toString());
-    localStorage.setItem('stockai_open_positions', JSON.stringify(localPositions));
-    showToast(`🤖 AI Auto-Trader deployed ${executedCount} sector-diversified trades (Total: ${localPositions.length} active positions)!`, 'success');
-  } else {
-    showToast(`All ${localPositions.length} position slots active across sectors. Monitoring live triggers!`, 'info');
-  }
-
-  if (btn) btn.textContent = '⚡ Run AI Auto-Trade Scan';
-  loadPortfolio();
-}
-
-// Dynamic Universe Scanner: Scans 35+ Nifty Stocks and Promotes Top Breakouts
-async function discoverTopStocks() {
-  const btn = document.getElementById('btn-discover-stocks');
-  if (btn) btn.textContent = '🔍 Scanning 35+ Nifty Universe...';
-  showToast('AI Scanning 35+ Nifty 50 universe for institutional volume breakouts...', 'info');
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
-    const res = await fetch(`${API_BASE}/api/universe/discover`, { signal: controller.signal });
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success && data.hot_opportunities) {
-        showToast(`🔥 Discovered & Promoted ${data.promoted_count} High-Confluence Stocks into Watchlist!`, 'success');
-
-        // Update global watchlist
-        if (data.active_watchlist && data.active_watchlist.length > 0) {
-          state.watchlist = data.active_watchlist.map(w => ({
-            symbol: w.symbol,
-            name: w.name,
-            market: 'NSE',
-            currency: '₹',
-            price: 0,
-            change_pct: 0
-          }));
-          populateStockSelectors(state.watchlist);
-          renderTickerRibbon(state.watchlist);
-        }
-
-        // Reload screener with newly promoted universe
-        await loadScreener();
-        return;
-      }
-    }
-    throw new Error('Server returned non-ok');
-  } catch (err) {
-    console.warn('Backend discover not reached, running autonomous client universe discovery...', err);
-    // Bulletproof Client-Side Discovery Fallback
-    const shuffled = [...DEFAULT_INDIAN_STOCKS].sort(() => 0.5 - Math.random());
-    const topPromoted = shuffled.slice(0, 10);
-    state.watchlist = topPromoted;
-    populateStockSelectors(topPromoted);
-    renderTickerRibbon(topPromoted);
-    showToast(`🔥 Discovered & Promoted ${topPromoted.length} High-Momentum Indian Stocks!`, 'success');
-    await loadScreener();
-  } finally {
-    if (btn) btn.textContent = '🔥 Auto-Discover Top Stocks';
-  }
-}
-
-// Flash Breaking News & Price Impact Predictor
-async function loadFlashNews() {
-  const container = document.getElementById('flash-news-container');
-  if (container) container.innerHTML = '<div style="font-size:0.78rem; color:var(--text-muted); padding:10px;">Scanning real-time Dalal Street news feeds...</div>';
-
-  let items = [];
-  try {
-    const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 4000);
-    const res = await fetch(`${API_BASE}/api/news/flash`, { signal: controller.signal });
-    clearTimeout(tid);
-    if (res.ok) {
-      items = await res.json();
-    }
-  } catch (err) {
-    console.warn('Backend flash news offline, using market catalysts stream');
-  }
-
-  // Fallback realistic market catalysts if backend is offline or empty
-  if (!items || items.length === 0) {
-    items = [
-      {
-        title: "Tata Motors Commercial & EV deliveries surge 24% YoY with high festival booking backlog",
-        matched_symbol: "TMPV.NS",
-        matched_name: "Tata Motors PV",
-        urgency: "⚡ HIGH IMPACT",
-        score: 0.75,
-        projected_move: "+2.5% to +4.8% Upside Surge",
-        action_advice: "BUY ON BREAKOUT",
-        why_action: "24% delivery surge & order backlog confirm operating leverage and aggressive institutional buying.",
-        positive_factors: ["24% YoY Volume Expansion", "High Festival EV Backlog"],
-        negative_risks: ["Near-term profit booking at 52-week peak"]
-      },
-      {
-        title: "TCS inks landmark $1.2 Billion multi-year AI enterprise cloud modernization agreement",
-        matched_symbol: "TCS.NS",
-        matched_name: "Tata Consultancy Services",
-        urgency: "⚡ HIGH IMPACT",
-        score: 0.65,
-        projected_move: "+1.8% to +3.6% Bullish Rally",
-        action_advice: "ACCUMULATE ON DIP",
-        why_action: "Multi-year $1.2B enterprise deal locks long-term cash flow predictability and expands IT market share.",
-        positive_factors: ["$1.2B Order Backlog Increase", "AI Cloud Enterprise Moat"],
-        negative_risks: ["Currency cross-rate headwinds"]
-      },
-      {
-        title: "HDFC Bank quarterly Net Interest Income beats street forecast; asset quality stays resilient",
-        matched_symbol: "HDFCBANK.NS",
-        matched_name: "HDFC Bank",
-        urgency: "⚡ HIGH IMPACT",
-        score: 0.80,
-        projected_move: "+1.5% to +2.8% Upside",
-        action_advice: "BUY ON BREAKOUT",
-        why_action: "Robust NII beat and low Gross NPA confirm balance sheet strength and trigger FII accumulation.",
-        positive_factors: ["Street-beating NII growth", "NPA at multi-year lows"],
-        negative_risks: ["Margin pressure if repo rates pause"]
-      },
-      {
-        title: "State Bank of India credit growth expands 15.4% YoY led by retail and infra loans",
-        matched_symbol: "SBIN.NS",
-        matched_name: "State Bank of India",
-        urgency: "⚡ HIGH IMPACT",
-        score: 0.60,
-        projected_move: "+1.2% to +2.5% Upside",
-        action_advice: "ACCUMULATE ON DIP",
-        why_action: "15.4% systemic credit expansion drives operating profits and supports momentum longs above EMA 21.",
-        positive_factors: ["15.4% Loan Book Expansion", "PSU Banking Inflows"],
-        negative_risks: ["Deposit re-pricing costs"]
-      }
-    ];
-  }
-
-  if (container) {
-    container.innerHTML = items.map(item => {
-      const isBullish = (item.score || 0) >= 0;
-      const urg = item.urgency || '⚡ HIGH IMPACT';
-      const badgeColor = urg.includes('FLASH') ? '#ef4444' : (urg.includes('HIGH') ? '#f59e0b' : '#06b6d4');
-      const sym = item.matched_symbol || '';
-      const why = item.why_action || (isBullish ? 'Positive operating catalyst supports continuation above support.' : 'Headwind creates downside risk; wait for solid support.');
-      const pos = item.positive_factors && item.positive_factors.length ? item.positive_factors : (isBullish ? ['Positive Dalal Street Momentum'] : []);
-      const neg = item.negative_risks && item.negative_risks.length ? item.negative_risks : (isBullish ? ['Near-term intraday pullback risk'] : ['Trapped sellers resistance']);
-
-      return `
-        <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px; display:flex; flex-direction:column; justify-content:space-between; gap:8px;">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span class="badge" style="background:${badgeColor}; color:#000; font-size:0.65rem; font-weight:700;">${urg}</span>
-            <strong style="font-size:0.75rem; color:#06b6d4;">${item.matched_name || 'Broad Market'}</strong>
-          </div>
-          <div style="font-size:0.84rem; font-weight:700; line-height:1.3; color:var(--text-primary);">
-            ${item.title}
-          </div>
-
-          <!-- Why Buy / Sell Rationale Box -->
-          <div style="background:rgba(0,0,0,0.25); border-radius:6px; padding:6px 8px; font-size:0.75rem; line-height:1.35; border-left:3px solid ${isBullish ? '#00F59B' : '#FF3366'};">
-            <div style="color:${isBullish ? '#00F59B' : '#FF3366'}; font-weight:700; margin-bottom:2px;">
-              💡 Why ${isBullish ? 'Buy' : 'Sell'}:
-            </div>
-            <div style="color:#cbd5e1;">${why}</div>
-            <div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:5px;">
-              ${pos.map(p => `<span style="background:rgba(0,245,155,0.12); color:#00F59B; font-size:0.62rem; padding:1px 5px; border-radius:3px;">+ ${p}</span>`).join('')}
-              ${neg.map(n => `<span style="background:rgba(255,51,102,0.12); color:#FF3366; font-size:0.62rem; padding:1px 5px; border-radius:3px;">⚠ ${n}</span>`).join('')}
-            </div>
-          </div>
-
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px; font-size:0.72rem; border-top:1px solid rgba(255,255,255,0.06); padding-top:8px;">
-            <div>
-              <span style="color:var(--text-muted);">Move:</span>
-              <strong style="color:${isBullish ? '#00F59B' : '#FF3366'}; margin-left:3px;">${item.projected_move || 'Catalyst move'}</strong>
-            </div>
-            <div style="display:flex; align-items:center; gap:6px;">
-              <span class="badge ${isBullish ? 'badge-buy' : 'badge-sell'}" style="font-size:0.65rem;">${item.action_advice || (isBullish ? 'BUY' : 'SELL')}</span>
-              ${sym ? `
-                <button class="btn ${isBullish ? 'btn-bullish' : 'btn-bearish'} btn-sm" style="font-size:0.68rem; padding:2px 8px; font-weight:700;" onclick="event.stopPropagation(); handleFlashNewsAction('${sym}', '${isBullish ? 'BUY' : 'SELL'}')">
-                  ⚡ Trade
-                </button>
-              ` : ''}
-            </div>
-          </div>
-        </div>
-      `;
-    }).join('');
-  }
-}
-
-function quickTradePrompt(symbol, side, price, sl, tp) {
-  selectStock(symbol);
-  state.orderSide = side;
-  const buyBtn = document.getElementById('order-btn-buy');
-  const sellBtn = document.getElementById('order-btn-sell');
-
-  if (side === 'BUY') {
-    buyBtn.className = 'order-type-btn active buy-active';
-    sellBtn.className = 'order-type-btn';
-  } else {
-    sellBtn.className = 'order-type-btn active sell-active';
-    buyBtn.className = 'order-type-btn';
-  }
-
-  document.getElementById('order-sl-input').value = sl;
-  document.getElementById('order-tp-input').value = tp;
-  updateOrderSummary();
-  switchTab('trading');
-  showToast(`Pre-filled ${side} setup for ${symbol}`, 'info');
-}
-
-// Load Portfolio & Win/Loss Analytics
-async function loadPortfolio() {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500);
-    const res = await fetch(`${API_BASE}/api/paper/portfolio`, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (!res.ok) throw new Error('Status not ok');
-    const p = await res.json();
-    state.portfolio = p;
-    renderPortfolioUI(p);
-  } catch (err) {
-    // Local state fallback
-    const localPositions = JSON.parse(localStorage.getItem('stockai_open_positions') || '[]');
-    const localClosed = JSON.parse(localStorage.getItem('stockai_closed_positions') || '[]');
-    const initialBalance = 100000.0;
-
-    let totalInvested = 0;
-    let totalUnrealized = 0;
-
-    localPositions.forEach(pos => {
-      const match = state.watchlist.find(s => s.symbol === pos.symbol);
-      if (match && match.price > 0 && Math.abs(match.price - pos.entry_price) < (pos.entry_price * 0.05)) {
-        pos.current_price = match.price;
-      }
-      const marginBlocked = pos.margin_blocked || Math.round((pos.entry_price * pos.quantity / INTRADAY_LEVERAGE) * 100) / 100;
-      pos.margin_blocked = marginBlocked;
-      totalInvested += marginBlocked;
-      const pnl = pos.side === 'BUY' ? (pos.current_price - pos.entry_price) * pos.quantity : (pos.entry_price - pos.current_price) * pos.quantity;
-      pos.unrealized_pnl = Math.round(pnl * 100) / 100;
-      pos.unrealized_pnl_pct = marginBlocked > 0 ? Math.round((pnl / marginBlocked) * 10000) / 100 : 0.0;
-      totalUnrealized += pnl;
-    });
-
-    const winning = localClosed.filter(c => (c.realized_pnl || 0) > 0);
-    const losing = localClosed.filter(c => (c.realized_pnl || 0) < 0);
-    const totalProfit = winning.reduce((acc, c) => acc + c.realized_pnl, 0);
-    const totalLoss = losing.reduce((acc, c) => acc + Math.abs(c.realized_pnl), 0);
-    const realizedPnl = localClosed.reduce((acc, c) => acc + (c.realized_pnl || 0), 0);
-
-    // Guaranteed Single Source of Truth for Capital & Net Equity:
-    // Total Equity = Initial Capital + Realized P&L + Unrealized P&L
-    const totalEquity = Math.round((initialBalance + realizedPnl + totalUnrealized) * 100) / 100;
-    // Available Cash = Initial Capital + Realized P&L - Total Invested Margin
-    const cash = Math.max(0, Math.round((initialBalance + realizedPnl - totalInvested) * 100) / 100);
-    localStorage.setItem('stockai_cash', cash.toString());
-
-    const winRate = localClosed.length ? Math.round((winning.length / localClosed.length) * 1000) / 10 : 0.0;
-
-    const p = {
-      cash_balance: cash,
-      initial_balance: initialBalance,
-      currency: '₹',
-      total_equity: totalEquity,
-      total_invested: Math.round(totalInvested * 100) / 100,
-      unrealized_pnl: Math.round(totalUnrealized * 100) / 100,
-      realized_pnl: Math.round(realizedPnl * 100) / 100,
-      win_rate: winRate,
-      total_trades: localClosed.length,
-      winning_trades: winning.length,
-      losing_trades: losing.length,
-      total_profit: Math.round(totalProfit * 100) / 100,
-      total_loss: Math.round(totalLoss * 100) / 100,
-      open_positions: localPositions,
-      closed_positions: localClosed
-    };
-    state.portfolio = p;
-    renderPortfolioUI(p);
-  }
-}
-
-function renderPortfolioUI(p) {
-  const walletPill = document.getElementById('header-wallet-pill');
-  if (walletPill) {
-    const pnl = Math.round(p.unrealized_pnl || 0);
-    const pnlColor = pnl >= 0 ? 'text-bullish' : 'text-bearish';
-    const sign = pnl >= 0 ? '+' : '';
-    const pnlText = pnl !== 0 ? ` <span class="${pnlColor}" style="font-size:0.75rem;">(${sign}₹${Math.abs(pnl).toLocaleString('en-IN')})</span>` : '';
-    walletPill.innerHTML = `💼 ₹${Math.round(p.total_equity).toLocaleString('en-IN')}${pnlText}`;
-  }
-
-  document.getElementById('kpi-equity').textContent = `₹${p.total_equity.toLocaleString()}`;
-  document.getElementById('kpi-cash').textContent = `₹${p.cash_balance.toLocaleString()}`;
-  const bpEl = document.getElementById('kpi-buying-power');
-  if (bpEl) bpEl.textContent = `⚡ 5x Buying Power: ₹${Math.round(p.cash_balance * INTRADAY_LEVERAGE).toLocaleString('en-IN')}`;
-
-  // Win / Loss KPI Cards
-  const winEl = document.getElementById('kpi-win-trades');
-  if (winEl) winEl.textContent = `${p.winning_trades || 0} Wins (+₹${(p.total_profit || 0).toLocaleString()})`;
-
-  const lossEl = document.getElementById('kpi-loss-trades');
-  if (lossEl) lossEl.textContent = `${p.losing_trades || 0} Losses (-₹${(p.total_loss || 0).toLocaleString()})`;
-
-  const winRateEl = document.getElementById('kpi-winrate');
-  if (winRateEl) winRateEl.textContent = `${p.win_rate || 0}%`;
-
-  const realPnlEl = document.getElementById('kpi-realized-pnl');
-  if (realPnlEl) {
-    realPnlEl.textContent = `${p.realized_pnl >= 0 ? '+' : ''}₹${(p.realized_pnl || 0).toLocaleString()}`;
-    realPnlEl.className = `kpi-val ${p.realized_pnl >= 0 ? 'text-bullish' : 'text-bearish'}`;
-  }
-
-  // Capital Shield Banner Status
-  const shieldText = document.getElementById('shield-cb-text');
-  const shieldBadge = document.getElementById('shield-regime-badge');
-  if (p.circuit_breaker) {
-    const cb = p.circuit_breaker;
-    if (shieldText) {
-      shieldText.textContent = `${cb.consecutive_losses}/2 Losses, ₹${cb.today_loss}/₹${cb.daily_cap}`;
-    }
-    if (shieldBadge) {
-      if (cb.active) {
-        shieldBadge.textContent = '🚨 KILL-SWITCH ACTIVE';
-        shieldBadge.style.background = '#ef4444';
-        shieldBadge.style.color = '#fff';
-      } else {
-        shieldBadge.textContent = 'SAFE REGIME';
-        shieldBadge.style.background = '#10b981';
-        shieldBadge.style.color = '#000';
-      }
-    }
-  }
-
-  renderOpenPositionsTable(p.open_positions, p.currency || '₹');
-  renderClosedPositionsTable(p.closed_positions, p.currency || '₹');
-  renderAiMistakeLearningHub();
-}
-
-function renderOpenPositionsTable(positions, curr) {
-  const tbody = document.getElementById('open-positions-tbody');
-  if (!tbody) return;
-
-  if (!positions || positions.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:var(--text-muted); padding:24px;">No active positions. Tap <strong>⚡ Run AI Auto-Trade Scan</strong> above to deploy 5-6 sector diversified trades!</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = positions.map(pos => {
-    const isProfitable = (pos.unrealized_pnl || 0) >= 0;
-    const pnlColor = isProfitable ? 'text-bullish' : 'text-bearish';
-    const isAi = pos.trade_type === 'AI_AUTONOMOUS';
-    const isApproved = pos.trade_type === 'AI_USER_APPROVED';
-    const isPartialBooked = pos.notes && pos.notes.includes('PARTIAL_BOOKED');
-    const cmpVal = Number(pos.current_price || pos.entry_price).toFixed(2);
-    const pnlVal = Number(pos.unrealized_pnl || 0).toFixed(2);
-    const pnlPct = Number(pos.unrealized_pnl_pct || 0).toFixed(2);
-
-    const entry = Number(pos.entry_price) || 1;
-    const slVal = Number(pos.stop_loss);
-    const tpVal = Number(pos.target_price);
-    const slDistPct = slVal ? Math.abs(Math.round(((slVal - entry) / entry) * 1000) / 10).toFixed(1) : null;
-    const tpDistPct = tpVal ? Math.abs(Math.round(((tpVal - entry) / entry) * 1000) / 10).toFixed(1) : null;
-
-    return `
-      <tr id="pos-row-${pos.id}" data-symbol="${pos.symbol}">
-        <td>
-          <div style="font-weight:800; font-size:0.9rem; color:#f8fafc;">${pos.symbol.replace('.NS', '')}</div>
-          <div style="font-size:0.68rem; color:var(--text-muted); margin-top:1px;">${pos.company_name || pos.sector || 'NSE Equities'}</div>
-          <span class="badge" style="background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.3); font-size:0.6rem; margin-top:3px; display:inline-block; font-weight:700;">⚡ INTRADAY 5x</span>
-          ${isApproved ? '<span class="badge" style="background:rgba(16,185,129,0.2); color:#10b981; font-size:0.6rem; margin-left:3px; border:1px solid rgba(16,185,129,0.4);">🛡️ Approved</span>' : (isAi ? '<span class="badge badge-pattern" style="font-size:0.6rem; margin-left:3px;">🤖 AI Auto</span>' : '')}
-          ${isPartialBooked ? '<br><span class="badge" style="background:linear-gradient(135deg, rgba(16,185,129,0.25), rgba(6,182,212,0.25)); color:#10b981; font-size:0.6rem; margin-top:2px; display:inline-block;">💰 60% Booked (Free-Ride)</span>' : ''}
-        </td>
-        <td><span class="badge ${pos.side === 'BUY' ? 'badge-buy' : 'badge-sell'}">${pos.side}</span></td>
-        <td style="font-weight:700;">
-          <div>${pos.quantity} shares</div>
-          <div style="font-size:0.65rem; color:#10b981; font-weight:700;">⚡ 5x Margin: ${curr}${pos.margin_blocked ? Math.round(pos.margin_blocked).toLocaleString('en-IN') : Math.round(pos.entry_price * pos.quantity / INTRADAY_LEVERAGE).toLocaleString('en-IN')}</div>
-        </td>
-        <td>${curr}${pos.entry_price}</td>
-        <td id="pos-cmp-${pos.id}" style="font-family:var(--font-mono); font-weight:700; transition:all 0.3s ease;">${curr}${cmpVal}</td>
-        <td id="pos-pnl-${pos.id}" class="${pnlColor}" style="font-family:var(--font-mono); font-weight:700; transition:all 0.3s ease;">
-          <strong>${isProfitable ? '+' : ''}${curr}${pnlVal}</strong> (${isProfitable ? '+' : ''}${pnlPct}%)
-        </td>
-        <td>
-          <span class="text-bearish" style="font-size:0.72rem; font-weight:700;">🛑 SL: ${pos.stop_loss ? curr + pos.stop_loss + ' (-' + slDistPct + '%)' : '-'}</span><br>
-          <span class="text-bullish" style="font-size:0.72rem; font-weight:700;">🎯 TP: ${pos.target_price ? curr + pos.target_price + ' (+' + tpDistPct + '%)' : '-'}</span>
-        </td>
-        <td>
-          <button class="btn btn-outline btn-sm" onclick="closePosition(${pos.id}, ${pos.current_price}, 'MANUAL')">
-            Close
-          </button>
-        </td>
-      </tr>
-    `;
-  }).join('');
-}
-
-// =============================================================================
-// AI Mistake Memory & Human-Like Post-Mortem Diagnosis Engine
-// "A pro trader learns from every loss and never repeats the same mistake twice"
-// =============================================================================
-
-function diagnoseTradeLoss(pos, currentPrice, reason) {
-  const sym = (pos.symbol || '').toUpperCase();
-  const side = pos.side || 'BUY';
-  const entry = Number(pos.entry_price) || 1000;
-  const sl = Number(pos.stop_loss) || 0;
-  const entryDate = parseUtcDate(pos.entry_time);
-  const istTimeStr = entryDate.toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour12: false });
-  const [eH, eM] = istTimeStr.split(':').map(Number);
-  const entryMinutes = (eH || 0) * 60 + (eM || 0);
-
-  const isMegaCap = /RELIANCE|TCS|INFY|HDFCBANK|ICICIBANK|SBIN|BHARTIARTL|ITC|LT|KOTAKBANK|AXISBANK/i.test(sym);
-
-  if (side === 'SELL' && isMegaCap) {
-    return {
-      category: 'COUNTER_TREND_TRAP',
-      diagnosis: `Counter-Trend Short Trap: Shorted ${sym.replace('.NS', '')} against dominant daily 200 EMA uptrend & buyer momentum.`,
-      lesson: `Prohibit shorting ${sym.replace('.NS', '')} unless price breaks down firmly below 200 EMA & VWAP with high bear volume.`,
-      actionRule: `BLOCK_COUNTER_TREND_SHORTS_${sym}`
-    };
-  }
-
-  if (entryMinutes >= 840) { // After 2:00 PM IST
-    return {
-      category: 'LATE_SESSION_SQUEEZE',
-      diagnosis: `Late Session Liquidity Exhaustion: Entered after 2:00 PM; caught in intraday square-off reversals and drying volume.`,
-      lesson: `Enforce Last-Hour Quick Scalp compression (max 0.8% - 1.0% target) or avoid new entries past 2:30 PM.`,
-      actionRule: `RESTRICT_LATE_DAY_${sym}`
-    };
-  }
-
-  if (reason === 'STOP_LOSS_HIT' && sl > 0) {
-    const slDist = Math.abs((entry - sl) / entry) * 100;
-    if (slDist <= 1.2) {
-      return {
-        category: 'TIGHT_SL_WICK_SHAKEOUT',
-        diagnosis: `Volatility Wick Shakeout: Tight stop loss (${slDist.toFixed(1)}%) was hit by normal intraday noise tick before reversing.`,
-        lesson: `Expand dynamic SL buffer to minimum 1.4x ATR (1.3% - 1.8%) to give trades healthy breathing room.`,
-        actionRule: `EXPAND_SL_BUFFER_${sym}`
-      };
-    }
-  }
-
-  if (pos.notes && pos.notes.includes('BREAKOUT')) {
-    return {
-      category: 'CLIMAX_EXHAUSTION',
-      diagnosis: `Range Exhaustion / False Breakout: Entered at the apex of the rally when buyer momentum was exhausted (>75% ATR used).`,
-      lesson: `Never chase breakout green candles at daily highs; wait for 15-minute pullback to 21 EMA support.`,
-      actionRule: `ENFORCE_PULLBACK_ENTRY_${sym}`
-    };
-  }
-
-  return {
-    category: 'MARKET_REGIME_REVERSAL',
-    diagnosis: `Market Regime Headwind: Sudden benchmark pullback dragged ${sym.replace('.NS', '')} below support.`,
-    lesson: `Enforce strict multi-sector confluence and tighten correlation check with Nifty 50.`,
-    actionRule: `CORRELATION_CHECK_${sym}`
-  };
-}
-
-function recordAiMistake(pos, pm) {
-  const mistakes = JSON.parse(localStorage.getItem('stockai_mistake_memory') || '[]');
-  const entry = {
-    id: Date.now(),
-    timestamp: new Date().toISOString(),
-    symbol: pos.symbol,
-    side: pos.side,
-    category: pm.category,
-    diagnosis: pm.diagnosis,
-    lesson: pm.lesson,
-    actionRule: pm.actionRule,
-    expiresAt: Date.now() + (3 * 3600 * 1000) // Active learning cooldown for 3 hours
-  };
-  mistakes.unshift(entry);
-  localStorage.setItem('stockai_mistake_memory', JSON.stringify(mistakes.slice(0, 20)));
-  renderAiMistakeLearningHub();
-}
-
-function checkAiMistakeSafeguard(sig) {
-  const mistakes = JSON.parse(localStorage.getItem('stockai_mistake_memory') || '[]');
-  const now = Date.now();
-  const activeMistakes = mistakes.filter(m => m.expiresAt > now);
-
-  const sym = sig.symbol;
-  const side = sig.action && sig.action.includes('SELL') ? 'SELL' : (sig.side || 'BUY');
-
-  for (const m of activeMistakes) {
-    if (m.symbol === sym && m.side === side) {
-      return {
-        blocked: true,
-        reason: `AI Learned Safeguard: Blocked ${side} on ${sym.replace('.NS', '')} to avoid repeating recent trap: "${m.diagnosis}"`
-      };
-    }
-  }
-
-  return { blocked: false };
-}
-
-function renderAiMistakeLearningHub() {
-  const container = document.getElementById('ai-mistake-learning-content');
-  if (!container) return;
-
-  const mistakes = JSON.parse(localStorage.getItem('stockai_mistake_memory') || '[]');
-  const now = Date.now();
-  const active = mistakes.filter(m => m.expiresAt > now);
-
-  const sessionInfo = getMarketSessionInfo();
-
-  if (active.length === 0) {
-    container.innerHTML = `
-      <div style="background:rgba(255,255,255,0.02); border:1px dashed rgba(255,255,255,0.1); border-radius:8px; padding:12px; font-size:0.78rem; color:var(--text-muted); text-align:center;">
-        <span style="color:#10b981; font-weight:700;">🧠 AI Self-Learning Engine Armed:</span> Zero unaddressed loss traps.
-        <div style="font-size:0.72rem; margin-top:3px; color:var(--text-secondary);">
-          Active Rule: ${sessionInfo.description} | All trades vetted against 15m confluence & 200 EMA trend locks.
-        </div>
-      </div>
-    `;
-    return;
-  }
-
-  container.innerHTML = `
-    <div style="display:flex; flex-direction:column; gap:8px;">
-      <div style="font-size:0.75rem; color:#f59e0b; font-weight:700; display:flex; align-items:center; gap:6px;">
-        <span>🛡️ ${active.length} Active Trap Safeguards Enforced:</span>
-        <span class="badge" style="background:rgba(245,158,11,0.2); color:#f59e0b; font-size:0.65rem;">Auto-Blocked</span>
-      </div>
-      ${active.slice(0, 4).map(m => `
-        <div style="background:rgba(0,0,0,0.3); border-left:3px solid #ef4444; border-radius:6px; padding:6px 10px; font-size:0.75rem;">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <strong style="color:#f8fafc;">${m.symbol.replace('.NS', '')} (${m.side})</strong>
-            <span style="color:#10b981; font-size:0.68rem; font-weight:700;">✅ REPEAT PREVENTED</span>
-          </div>
-          <div style="color:#fca5a5; font-size:0.7rem; margin-top:2px;">
-            🛑 <strong>Why it failed:</strong> ${m.diagnosis}
-          </div>
-          <div style="color:#38bdf8; font-size:0.7rem; margin-top:2px;">
-            💡 <strong>AI Lesson Applied:</strong> ${m.lesson}
-          </div>
-        </div>
-      `).join('')}
-    </div>
-  `;
-}
-
-function renderClosedPositionsTable(trades, curr) {
-  const container = document.getElementById('today-trades-list-container');
-  const countBadge = document.getElementById('today-trades-count-badge');
-  const summaryPill = document.getElementById('today-pnl-summary-pill');
-
-  // Calculate Today's date string in IST (YYYY-MM-DD)
-  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
-
-  // Filter trades for today only
-  const allTrades = trades || [];
-  const todayTrades = allTrades.filter(t => {
-    const rawTime = t.close_time || t.closed_at || t.exit_time || t.timestamp;
-    if (!rawTime) {
-      // If no timestamp is present on latest trade, include it
-      return true;
-    }
-    try {
-      const d = parseUtcDate(rawTime);
-      const tIstStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
-      return tIstStr === todayStr;
-    } catch (e) {
-      return true;
-    }
-  });
-
-  // Calculate today's summary metrics
-  const totalTodayCount = todayTrades.length;
-  const totalTodayPnl = todayTrades.reduce((acc, t) => acc + (Number(t.realized_pnl) || 0), 0);
-  const winningToday = todayTrades.filter(t => (t.realized_pnl || 0) > 0).length;
-
-  if (countBadge) {
-    countBadge.textContent = `${totalTodayCount} Trades Today`;
-  }
-  if (summaryPill) {
-    summaryPill.textContent = `${totalTodayPnl >= 0 ? '+' : ''}${curr}${totalTodayPnl.toFixed(2)} Net`;
-    summaryPill.className = totalTodayPnl >= 0 ? 'text-bullish' : 'text-bearish';
-    summaryPill.style.color = totalTodayPnl >= 0 ? '#10b981' : '#ef4444';
-  }
-
-
-  if (!container) return;
-
-  if (todayTrades.length === 0) {
-    container.innerHTML = `
-      <div style="background:rgba(255,255,255,0.02); border:1px dashed rgba(255,255,255,0.1); border-radius:12px; padding:24px; text-align:center;">
-        <div style="font-size:1.6rem; margin-bottom:6px;">☕</div>
-        <div style="font-weight:700; color:#cbd5e1; font-size:0.88rem;">No Trades Closed Today Yet</div>
-        <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">
-          Today's closed intraday positions will automatically appear here with exact P&L and timestamps.
-        </div>
-      </div>
-    `;
-    return;
-  }
-
-  container.innerHTML = todayTrades.map(t => {
-    const pnl = Number(t.realized_pnl) || 0;
-    const isWin = pnl > 0;
-    const pnlColor = isWin ? '#10b981' : (pnl < 0 ? '#ef4444' : '#cbd5e1');
-    const trigger = t.close_reason === 'TARGET_HIT' ? '🎯 Target Hit' : (t.close_reason === 'STOP_LOSS_HIT' ? '🛑 Stop Loss Hit' : '👤 Manual Close');
-
-    // Format IST time
-    let timeDisplay = '';
-    const rawTime = t.close_time || t.closed_at || t.exit_time || t.timestamp;
-    if (rawTime) {
-      try {
-        const d = parseUtcDate(rawTime);
-        timeDisplay = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
-      } catch (e) {}
-    }
-
-    const cleanSym = (t.symbol || '').replace('.NS', '').replace('-EQ', '');
-    const entry = Number(t.entry_price) || 0;
-    const exit = Number(t.close_price) || 0;
-
-    return `
-      <div class="today-trade-card ${isWin ? 'win-card' : 'loss-card'}">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <div style="display:flex; align-items:center; gap:8px;">
-            <span style="font-weight:800; font-size:0.95rem; color:#fff;">${cleanSym}</span>
-            <span class="badge ${t.side === 'BUY' ? 'badge-buy' : 'badge-sell'}" style="font-size:0.68rem; font-weight:800; padding:2px 7px;">${t.side}</span>
-            ${timeDisplay ? `<span style="font-size:0.72rem; color:var(--text-muted);">${timeDisplay}</span>` : ''}
-          </div>
-          <div style="text-align:right;">
-            <span style="font-size:1.02rem; font-weight:800; font-family:var(--font-mono); color:${pnlColor};">
-              ${pnl >= 0 ? '+' : ''}${curr}${pnl.toFixed(2)}
-            </span>
-          </div>
-        </div>
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; font-size:0.75rem; color:var(--text-secondary); flex-wrap:wrap; gap:4px;">
-          <div>
-            <span>${t.quantity} Qty</span> · <span>Entry: ${curr}${entry.toFixed(2)}</span> → <span>Exit: ${curr}${exit.toFixed(2)}</span>
-          </div>
-          <div style="display:flex; align-items:center; gap:6px;">
-            <span class="badge" style="font-size:0.65rem; background:${isWin ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)'}; color:${isWin ? '#10b981' : '#ef4444'}; font-weight:700;">
-              ${trigger}
-            </span>
-            <span class="badge" style="background:rgba(255,255,255,0.06); color:var(--text-muted); font-size:0.62rem;">5x MIS</span>
-          </div>
-        </div>
-      </div>
-    `;
-  }).join('');
-}
-
-async function closePosition(positionId, currentPrice, reason = 'MANUAL') {
-  try {
-    const res = await fetch(`${API_BASE}/api/paper/close/${positionId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ current_price: currentPrice, reason: reason })
-    });
-    const result = await res.json();
-    if (result.success) {
-      showToast(result.message, 'info');
-      loadPortfolio();
-      return;
-    }
-  } catch (err) {}
-
-  // Local fallback
-  let localPositions = JSON.parse(localStorage.getItem('stockai_open_positions') || '[]');
-  const pos = localPositions.find(p => p.id === positionId);
-  if (pos) {
-    localPositions = localPositions.filter(p => p.id !== positionId);
-    localStorage.setItem('stockai_open_positions', JSON.stringify(localPositions));
-    const pnl = pos.side === 'BUY' ? (currentPrice - pos.entry_price) * pos.quantity : (pos.entry_price - currentPrice) * pos.quantity;
-
-    const closed = JSON.parse(localStorage.getItem('stockai_closed_positions') || '[]');
-    const isLoss = pnl < 0;
-
-    let diagnosis = null;
-    let lesson = null;
-    if (isLoss) {
-      const pm = diagnoseTradeLoss(pos, currentPrice, reason);
-      diagnosis = pm.diagnosis;
-      lesson = pm.lesson;
-      recordAiMistake(pos, pm);
-    } else {
-      diagnosis = "Confluence Target Hit";
-      lesson = "15m Multi-Timeframe structure held strong.";
-    }
-
-    closed.unshift({
-      symbol: pos.symbol,
-      side: pos.side,
-      quantity: pos.quantity,
-      entry_price: pos.entry_price,
-      close_price: currentPrice,
-      realized_pnl: Math.round(pnl * 100) / 100,
-      close_reason: reason,
-      trade_type: pos.trade_type || 'AI_AUTONOMOUS',
-      trade_result: pnl > 0 ? 'WIN' : 'LOSS',
-      post_mortem: diagnosis,
-      lesson_learned: lesson,
-      close_time: new Date().toISOString()
-    });
-    localStorage.setItem('stockai_closed_positions', JSON.stringify(closed));
-    showToast(`Closed ${pos.symbol} at ₹${currentPrice}. ${pnl > 0 ? '🏆 WIN' : '🛑 LOSS'} (₹${pnl.toFixed(2)})`, pnl > 0 ? 'success' : 'error');
-    renderAiMistakeLearningHub();
-    loadPortfolio();
-  }
-}
-
-async function squareOffAllPositionsPrompt() {
-  const localPositions = JSON.parse(localStorage.getItem('stockai_open_positions') || '[]');
-  if (localPositions.length === 0) {
-    showToast('No active positions to square off!', 'info');
-    return;
-  }
-  if (!confirm(`⚡ Square off all ${localPositions.length} active positions at current market prices?`)) return;
-
-  // 1. Close on real broker if live mode or real positions exist
-  const hasRealPositions = localPositions.some(p => p.is_real) || state.executionMode === 'REAL_BROKER';
-  if (hasRealPositions) {
-    try {
-      const brokerSq = await fetch(`${API_BASE}/api/broker/square-off-all`, { method: 'POST' });
-      const bData = await brokerSq.json();
-      if (bData.status && bData.squared_off_count > 0) {
-        showToast(`⚡ Angel One: Squared off ${bData.squared_off_count} real broker intraday positions!`, 'success');
-      }
-    } catch (e) {
-      console.warn('Real broker square off error:', e);
-    }
-  }
-
-  // 2. Close local tracking positions
-  const toClose = [...localPositions];
-  for (const pos of toClose) {
-    const curP = Number(pos.current_price) || Number(pos.entry_price);
-    await closePosition(pos.id, curP, 'MANUAL_SQUARE_OFF');
-  }
-  showToast(`✅ Squared off all ${toClose.length} positions!`, 'success');
-  loadPortfolio();
-}
-
-async function checkEodAutoSquareOff() {
-  const istStr = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Kolkata',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  }).format(new Date());
-  const [h, m] = istStr.split(':').map(Number);
-  const totalMins = (h || 0) * 60 + (m || 0);
-  const dayName = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', weekday: 'short' }).format(new Date());
-  const isMarketDay = dayName !== 'Sat' && dayName !== 'Sun';
-
-  // Strictly execute ONLY between 03:15 PM and 03:30 PM IST on live trading market days
-  if (!isMarketDay || totalMins < 915 || totalMins > 930) {
-    return;
-  }
-
-  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
-  if (localStorage.getItem('stockai_eod_squareoff_done') === todayStr) {
-    return; // Already executed today once!
-  }
-
-  const localPositions = JSON.parse(localStorage.getItem('stockai_open_positions') || '[]');
-  const intradayPositions = localPositions.filter(p => p.product_type === 'INTRADAY' || !p.product_type);
-  if (intradayPositions.length === 0) {
-    return;
-  }
-
-  // Mark done immediately to prevent re-entrant second loop triggers
-  localStorage.setItem('stockai_eod_squareoff_done', todayStr);
-
-  // Trigger broker-level square-off for real orders
-  if (intradayPositions.some(p => p.is_real) || state.executionMode === 'REAL_BROKER') {
-    try {
-      await fetch(`${API_BASE}/api/broker/square-off-all`, { method: 'POST' });
-    } catch (e) {}
-  }
-
-  intradayPositions.forEach(pos => {
-    closePosition(pos.id, Number(pos.current_price) || Number(pos.entry_price), 'EOD_AUTO_SQUAREOFF');
-  });
-
-  showToast(`⚡ 03:15 PM EOD Square-Off: Auto-closed ${intradayPositions.length} Intraday positions before market close.`, 'info');
-}
-
-async function resetPortfolioPrompt() {
-  if (confirm('Are you sure you want to reset your Paper Trading Portfolio back to ₹1,00,000?')) {
-    localStorage.removeItem('stockai_open_positions');
-    localStorage.removeItem('stockai_closed_positions');
-    localStorage.setItem('stockai_cash', '100000.0');
-    try {
-      await fetch(`${API_BASE}/api/paper/reset`, { method: 'POST' });
-    } catch (e) {}
-    showToast('Portfolio reset successfully to ₹1,00,000!', 'info');
-    loadPortfolio();
-  }
-}
-
-// Server URL Configuration for Android APK
-function saveServerConfig() {
-  const urlInput = document.getElementById('server-url-input');
-  if (!urlInput) return;
-  const val = urlInput.value.trim();
-  if (val) {
-    localStorage.setItem('stockai_server_url', val);
-    showToast('Server URL saved! Reloading...', 'success');
-    setTimeout(() => window.location.reload(), 1000);
-  }
-}
-
-function initServerConfigUI() {
-  const urlInput = document.getElementById('server-url-input');
-  if (urlInput) {
-    urlInput.value = API_BASE;
-  }
-}
-
-// =============================================================================
-// Angel One SmartAPI Integration & Client-Side TOTP Generator
-// =============================================================================
-async function generateTotpJS(secret) {
-  if (!secret) return '';
-  const clean = secret.toUpperCase().replace(/[\s=]/g, '');
-  if (/^\d{6}$/.test(clean)) return clean; // Direct 6-digit OTP code
-
-  try {
-    const b32Alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-    let bits = '';
-    for (let i = 0; i < clean.length; i++) {
-      const val = b32Alphabet.indexOf(clean.charAt(i));
-      if (val === -1) continue;
-      bits += val.toString(2).padStart(5, '0');
-    }
-
-    const keyBytes = new Uint8Array(Math.floor(bits.length / 8));
-    for (let i = 0; i + 8 <= bits.length; i += 8) {
-      keyBytes[i / 8] = parseInt(bits.substring(i, i + 8), 2);
-    }
-
-    const epoch = Math.floor(Date.now() / 1000 / 30);
-    const timeBuffer = new ArrayBuffer(8);
-    const timeView = new DataView(timeBuffer);
-    timeView.setUint32(0, Math.floor(epoch / 0x100000000), false);
-    timeView.setUint32(4, epoch & 0xffffffff, false);
-
-    if (window.crypto && window.crypto.subtle) {
-      const cryptoKey = await window.crypto.subtle.importKey(
-        'raw',
-        keyBytes,
-        { name: 'HMAC', hash: { name: 'SHA-1' } },
-        false,
-        ['sign']
-      );
-      const signature = await window.crypto.subtle.sign('HMAC', cryptoKey, timeBuffer);
-      const hash = new Uint8Array(signature);
-      const offset = hash[19] & 0x0f;
-      const binary = ((hash[offset] & 0x7f) << 24) |
-                     ((hash[offset + 1] & 0xff) << 16) |
-                     ((hash[offset + 2] & 0xff) << 8) |
-                     (hash[offset + 3] & 0xff);
-      const code = (binary % 1000000).toString().padStart(6, '0');
-      console.log('[SmartAPI] Generated client-side TOTP successfully');
-      return code;
-    }
-  } catch (err) {
-    console.warn('[SmartAPI] TOTP JS generation error:', err);
-  }
-  return clean;
-}
-
-async function loadAngelStatus() {
-  const badge = document.getElementById('angel-status-badge');
-
-  // Detect and display current public IP for Angel One whitelist notice
-  try {
-    fetch('https://api.ipify.org?format=json')
-      .then(r => r.json())
-      .then(d => {
-        if (d && d.ip) {
-          const ipEl = document.getElementById('user-detected-ip');
-          if (ipEl) ipEl.textContent = d.ip;
-        }
-      }).catch(() => {});
-  } catch (e) {}
-
-  try {
-    const res = await fetch(`${API_BASE}/api/settings/angel-one`);
-    if (!res.ok) return;
-    const data = await res.json();
-    if (data.authenticated) {
-      localStorage.setItem('stockai_angel_auth', 'true');
-      if (badge) {
-        badge.innerHTML = `🟢 Connected (${data.client_code || 'Live'})`;
-        badge.style.color = 'var(--color-bullish)';
-        badge.style.background = 'rgba(0, 230, 118, 0.15)';
-      }
-      fetchAngelDematHoldings();
-      fetchAngelRmsFunds();
-    } else if (data.configured) {
-      if (badge) {
-        badge.innerHTML = '🟡 Configured (Auth Needed)';
-        badge.style.color = 'var(--color-neutral)';
-      }
-    } else {
-      localStorage.removeItem('stockai_angel_auth');
-      if (badge) {
-        badge.innerHTML = '⚪ Not Connected';
-        badge.style.color = 'var(--text-muted)';
-      }
-    }
-  } catch (e) {
-    console.warn('Could not verify Angel One status with backend:', e);
-  }
-}
-
-async function saveAngelConfig() {
-  const apiKey = document.getElementById('angel-api-key')?.value.trim();
-  const clientCode = document.getElementById('angel-client-code')?.value.trim();
-  const password = document.getElementById('angel-password')?.value.trim();
-  const totpSecret = document.getElementById('angel-totp')?.value.trim();
-
-  if (!apiKey || !clientCode || !password || !totpSecret) {
-    showToast('Please fill all 4 fields: API Key, Client Code, PIN, and TOTP', 'error');
-    return;
-  }
-
-  showToast('Connecting securely to Angel One SmartAPI...', 'info');
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(`${API_BASE}/api/settings/angel-one`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        api_key: apiKey,
-        client_code: clientCode,
-        password: password,
-        totp_secret: totpSecret
-      }),
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-    const result = await res.json();
-    showToast(result.message, result.success ? 'success' : 'error');
-    
-    if (result.success) {
-      localStorage.setItem('stockai_angel_auth', 'true');
-      // Clean up sensitive secrets from localStorage
-      localStorage.removeItem('stockai_angel_credentials');
-      localStorage.removeItem('stockai_angel_jwt');
-      localStorage.removeItem('stockai_angel_totp');
-      localStorage.removeItem('stockai_angel_key');
-
-      const badge = document.getElementById('angel-status-badge');
-      if (badge) {
-        badge.innerHTML = `🟢 Connected (${result.client_code || 'Live'})`;
-        badge.style.color = 'var(--color-bullish)';
-        badge.style.background = 'rgba(0, 230, 118, 0.15)';
-      }
-      fetchAngelDematHoldings();
-      fetchAngelRmsFunds();
-      loadWatchlist();
-      loadScreener();
-    }
-  } catch (err) {
-    showToast('Could not reach backend server to authenticate Angel One', 'error');
-  }
-}
-
-// Watchlist Add / Remove
-async function addCustomStock() {
-  const symInput = document.getElementById('new-stock-symbol');
-  const nameInput = document.getElementById('new-stock-name');
-  const symbol = symInput.value.trim().toUpperCase();
-  const name = nameInput.value.trim();
-
-  if (!symbol) return;
-
-  try {
-    const res = await fetch(`${API_BASE}/api/watchlist/add`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ symbol, name, market: "NSE", currency: "₹" })
-    });
-    const result = await res.json();
-    showToast(result.message, result.success ? 'success' : 'error');
-    if (result.success) {
-      symInput.value = '';
-      nameInput.value = '';
-      loadWatchlist();
-    }
-  } catch (err) {
-    state.watchlist.push({ symbol, name: name || symbol, market: "NSE", currency: "₹", price: 0.0, change_pct: 0.0 });
-    renderTickerRibbon(state.watchlist);
-    populateStockSelectors(state.watchlist);
-    showToast(`Added ${symbol} to watchlist`, 'success');
-  }
-}
-
-// =============================================================================
-// Angel One / Zerodha Kite Style Continuous Live Real-Time Market Engine
-// High-frequency 1.5s tick loop with auto-updating P&L, live flashing & auto SL/TP triggers
-// =============================================================================
-let liveMarketInterval = null;
-let lastRealQuoteSyncTime = 0;
-
-function startContinuousLiveMarketEngine() {
-  if (liveMarketInterval) clearInterval(liveMarketInterval);
-
-  liveMarketInterval = setInterval(() => {
-    syncRealQuotesPeriodically();
-    tickOpenPositionsLive();
-    tickTickerRibbonLive();
-    updateMarketSessionUI();
-    checkEodAutoSquareOff();
-  }, 1000);
-}
-
-function tickOpenPositionsLive() {
-  if (!state.portfolio || !state.portfolio.open_positions || state.portfolio.open_positions.length === 0) {
-    return;
-  }
-
-  const sessionInfo = getMarketSessionInfo();
-  const isMarketClosed = sessionInfo.session === 'OFF_MARKET';
-
-  const curr = state.portfolio.currency || '₹';
-  let totalInvested = 0;
-  let totalUnrealized = 0;
-  let triggerOccurred = false;
-
-  state.portfolio.open_positions.forEach(pos => {
-    const oldCmp = Number(pos.current_price) || Number(pos.entry_price) || 1000;
-    let newCmp = oldCmp;
-
-    // 1. Direct Real Quote from Angel One (Instant snap, zero smoothing lag!)
-    if (state.latestLivePrices && state.latestLivePrices[pos.symbol]) {
-      newCmp = Number(state.latestLivePrices[pos.symbol]);
-    } else if (!isMarketClosed) {
-      // Micro-fluctuations standard tick only during LIVE market hours (09:15 - 15:30)
-      const basePrice = Number(pos.anchor_price) || Number(pos.entry_price) || oldCmp;
-      const tickSize = oldCmp > 2000 ? 0.20 : (oldCmp > 500 ? 0.10 : 0.05);
-      if (Math.random() > 0.40) {
-        const drift = oldCmp - basePrice;
-        let dir = Math.random() > 0.49 ? 1 : -1;
-        if (Math.abs(drift) > (basePrice * 0.0035)) {
-          dir = drift > 0 ? -1 : 1;
-        }
-        newCmp = Math.max(1, Math.round((oldCmp + dir * tickSize) * 100) / 100);
-      }
-    } else {
-      // Market is CLOSED: Strictly freeze price at official closing price!
-      newCmp = oldCmp;
-    }
-
-    const isUp = newCmp > oldCmp;
-    const isDown = newCmp < oldCmp;
-    pos.current_price = newCmp;
-
-    const marginBlocked = pos.margin_blocked || Math.round((pos.entry_price * pos.quantity / INTRADAY_LEVERAGE) * 100) / 100;
-    pos.margin_blocked = marginBlocked;
-    totalInvested += marginBlocked;
-
-    const pnl = pos.side === 'BUY' 
-      ? (newCmp - pos.entry_price) * pos.quantity 
-      : (pos.entry_price - newCmp) * pos.quantity;
-
-    pos.unrealized_pnl = Math.round(pnl * 100) / 100;
-    pos.unrealized_pnl_pct = marginBlocked > 0 ? Math.round((pnl / marginBlocked) * 10000) / 100 : 0.0;
-    totalUnrealized += pnl;
-
-    // Update DOM cell for CMP with live arrow and glow flash
-    const cmpEl = document.getElementById(`pos-cmp-${pos.id}`);
-    if (cmpEl) {
-      const arrow = isUp ? '▲' : (isDown ? '▼' : '');
-      const arrowColor = isUp ? 'var(--color-bullish)' : (isDown ? 'var(--color-bearish)' : 'inherit');
-      cmpEl.innerHTML = `${curr}${newCmp.toFixed(2)} ${arrow ? `<span style="font-size:0.65rem; color:${arrowColor}; margin-left:3px;">${arrow}</span>` : ''}`;
-      
-      if (isUp) {
-        cmpEl.classList.remove('flash-down');
-        cmpEl.classList.add('flash-up');
-        setTimeout(() => cmpEl && cmpEl.classList.remove('flash-up'), 700);
-      } else if (isDown) {
-        cmpEl.classList.remove('flash-up');
-        cmpEl.classList.add('flash-down');
-        setTimeout(() => cmpEl && cmpEl.classList.remove('flash-down'), 700);
-      }
-    }
-
-    // Update DOM cell for Unrealized P&L
-    const pnlEl = document.getElementById(`pos-pnl-${pos.id}`);
-    if (pnlEl) {
-      const isProfitable = pos.unrealized_pnl >= 0;
-      pnlEl.className = isProfitable ? 'text-bullish' : 'text-bearish';
-      pnlEl.innerHTML = `<strong>${isProfitable ? '+' : ''}${curr}${pos.unrealized_pnl.toFixed(2)}</strong> (${isProfitable ? '+' : ''}${pos.unrealized_pnl_pct.toFixed(2)}%)`;
-      if (isUp || isDown) {
-        const cls = isUp ? 'flash-up' : 'flash-down';
-        pnlEl.classList.add(cls);
-        setTimeout(() => pnlEl && pnlEl.classList.remove(cls), 700);
-      }
-    }
-
-    // Real-Time Stop Loss & Target Price Checks (ACTIVE ONLY DURING LIVE MARKET HOURS!)
-    if (!isMarketClosed) {
-      if (pos.side === 'BUY') {
-        if (pos.stop_loss && newCmp <= pos.stop_loss) {
-          triggerOccurred = true;
-          closePosition(pos.id, newCmp, 'STOP_LOSS_HIT');
-        } else if (pos.target_price && newCmp >= pos.target_price) {
-          triggerOccurred = true;
-          closePosition(pos.id, newCmp, 'TARGET_HIT');
-        }
-      } else if (pos.side === 'SELL') {
-        if (pos.stop_loss && newCmp >= pos.stop_loss) {
-          triggerOccurred = true;
-          closePosition(pos.id, newCmp, 'STOP_LOSS_HIT');
-        } else if (pos.target_price && newCmp <= pos.target_price) {
-          triggerOccurred = true;
-          closePosition(pos.id, newCmp, 'TARGET_HIT');
-        }
-      }
-    }
-  });
-
-  if (triggerOccurred) return;
-
-  // Recalculate Portfolio Net Equity & Total Unrealized P&L accurately
-  const initial = Number(state.portfolio.initial_balance) || 100000;
-  const realized = Number(state.portfolio.realized_pnl) || 0;
-  const equity = Math.round((initial + realized + totalUnrealized) * 100) / 100;
-  const cash = Math.max(0, Math.round((initial + realized - totalInvested) * 100) / 100);
-
-  state.portfolio.cash_balance = cash;
-  state.portfolio.total_invested = Math.round(totalInvested * 100) / 100;
-  state.portfolio.total_equity = equity;
-  state.portfolio.unrealized_pnl = Math.round(totalUnrealized * 100) / 100;
-
-  try {
-    localStorage.setItem('stockai_open_positions', JSON.stringify(state.portfolio.open_positions));
-  } catch (e) {}
-
-  // Live update Header Wallet Pill (e.g. 💼 ₹1,00,076 (+₹76))
-  const walletPill = document.getElementById('header-wallet-pill');
-  if (walletPill) {
-    const pnl = Math.round(totalUnrealized);
-    const pnlColor = pnl >= 0 ? 'text-bullish' : 'text-bearish';
-    const sign = pnl >= 0 ? '+' : '';
-    const pnlText = pnl !== 0 ? ` <span class="${pnlColor}" style="font-size:0.75rem;">(${sign}₹${Math.abs(pnl).toLocaleString('en-IN')})</span>` : '';
-    walletPill.innerHTML = `💼 ₹${Math.round(equity).toLocaleString('en-IN')}${pnlText}`;
-  }
-
-  // Live update Net Equity KPI Card
-  const eqEl = document.getElementById('kpi-equity');
-  if (eqEl) {
-    eqEl.textContent = `₹${Math.round(equity).toLocaleString('en-IN')}`;
-  }
-  const cashEl = document.getElementById('kpi-cash');
-  if (cashEl) {
-    cashEl.textContent = `₹${Math.round(cash).toLocaleString('en-IN')}`;
-  }
-  const bpEl = document.getElementById('kpi-buying-power');
-  if (bpEl) {
-    bpEl.textContent = `⚡ 5x Buying Power: ₹${Math.round(cash * INTRADAY_LEVERAGE).toLocaleString('en-IN')}`;
-  }
-}
-
-function tickTickerRibbonLive() {
-  if (!state.watchlist || state.watchlist.length === 0) return;
-
-  const sessionInfo = getMarketSessionInfo();
-  const isMarketClosed = sessionInfo.session === 'OFF_MARKET';
-
-  state.watchlist.forEach(s => {
-    let newPrice = Number(s.price) || 1000;
-    let priceUpdated = false;
-
-    // 1. If Angel One has real quote, use it immediately
-    if (state.latestLivePrices && state.latestLivePrices[s.symbol]) {
-      const realP = Number(state.latestLivePrices[s.symbol]);
-      if (realP > 0 && Math.abs(realP - newPrice) > 0.01) {
-        newPrice = realP;
-        priceUpdated = true;
-      }
-    } else if (!isMarketClosed) {
-      // Micro-tick only during live market hours
-      if (Math.random() > 0.65) {
-        const tickSize = newPrice > 2000 ? 0.25 : (newPrice > 500 ? 0.10 : 0.05);
-        const dir = Math.random() > 0.49 ? 1 : -1;
-        newPrice = Math.max(1, Math.round((newPrice + dir * tickSize) * 100) / 100);
-        priceUpdated = true;
-      }
-    }
-
-    if (priceUpdated) {
-      s.price = newPrice;
-      const cleanKey = s.symbol.replace(/[^a-zA-Z0-9]/g, '');
-      const priceEl = document.getElementById(`ticker-price-${cleanKey}`);
-      if (priceEl) {
-        priceEl.textContent = `${s.currency || '₹'}${newPrice.toFixed(2)}`;
-      }
-    }
-  });
-
-  // If viewing currentSymbol on chart, update CMP header
-  if (state.currentSymbol) {
-    const match = state.watchlist.find(w => w.symbol === state.currentSymbol);
-    if (match) {
-      const cmpHeader = document.getElementById('selected-stock-price');
-      if (cmpHeader) {
-        cmpHeader.textContent = `${match.currency || '₹'}${match.price.toFixed(2)}`;
-      }
-    }
-  }
-}
-
-async function syncRealQuotesPeriodically() {
-  const now = Date.now();
-  if (now - lastRealQuoteSyncTime < 1000) return;
-  lastRealQuoteSyncTime = now;
-
-  const angelJwt = localStorage.getItem('stockai_angel_jwt');
-  const angelKey = localStorage.getItem('stockai_angel_key');
-
-  const NSE_TOKENS_MAP = {
-    "RELIANCE.NS": "2885", "HDFCBANK.NS": "1333", "TCS.NS": "11536",
-    "ICICIBANK.NS": "4963", "INFY.NS": "1594", "SBIN.NS": "3045",
-    "BHARTIARTL.NS": "10604", "ITC.NS": "1660", "LT.NS": "11483",
-    "AXISBANK.NS": "5900", "KOTAKBANK.NS": "1922", "TMCV.NS": "3456",
-    "TMPV.NS": "3457", "TATAPOWER.NS": "3426", "ZOMATO.NS": "5097",
-    "HAL.NS": "2303", "BEL.NS": "383", "BAJFINANCE.NS": "317",
-    "MARUTI.NS": "10999", "TRENT.NS": "1964", "SUZLON.NS": "11452",
-    "WIPRO.NS": "3787", "IRFC.NS": "2016", "IDEA.NS": "14366",
-    "JIOFIN.NS": "19409"
-  };
-
-  // 1. Direct Angel One SmartAPI High-Speed Batch LTP Quote (Takes ~110ms)
-  if (angelJwt && angelKey) {
-    const allTokens = Object.values(NSE_TOKENS_MAP);
-    try {
-      const quoteRes = await fetch('https://apiconnect.angelone.in/rest/secure/angelbroking/market/v1/quote', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-UserType': 'USER',
-          'X-SourceID': 'WEB',
-          'X-ClientLocalIP': '127.0.0.1',
-          'X-ClientPublicIP': '49.43.225.185',
-          'X-MACAddress': '02:00:00:00:00:00',
-          'X-PrivateKey': angelKey,
-          'Authorization': `Bearer ${angelJwt}`
-        },
-        body: JSON.stringify({
-          mode: "LTP",
-          exchangeTokens: { "NSE": allTokens }
-        })
-      });
-      const qData = await quoteRes.json();
-      if (qData.status && qData.data && qData.data.fetched) {
-        if (!state.latestLivePrices) state.latestLivePrices = {};
-        qData.data.fetched.forEach(item => {
-          const sym = Object.keys(NSE_TOKENS_MAP).find(k => NSE_TOKENS_MAP[k] === item.symbolToken);
-          const ltp = Number(item.ltp);
-          if (sym && ltp > 0) {
-            state.latestLivePrices[sym] = ltp;
-
-            // 1. Watchlist in-memory update
-            const wItem = state.watchlist.find(w => w.symbol === sym);
-            if (wItem) {
-              wItem.price = ltp;
-              const close = Number(item.close) || ltp;
-              if (close > 0) {
-                wItem.change_pct = Math.round(((ltp - close) / close) * 10000) / 100;
-              }
-            }
-
-            // 2. Ticker Ribbon DOM live update
-            const cleanKey = sym.replace(/[^a-zA-Z0-9]/g, '');
-            const priceEl = document.getElementById(`ticker-price-${cleanKey}`);
-            if (priceEl) {
-              priceEl.textContent = `₹${ltp.toFixed(2)}`;
-            }
-
-            // 3. Chart Header CMP if currently viewing this stock
-            if (state.currentSymbol === sym) {
-              const cmpHeader = document.getElementById('selected-stock-price');
-              if (cmpHeader) cmpHeader.textContent = `₹${ltp.toFixed(2)}`;
-            }
-
-            // 4. Trade Ticket Price Input if currently selected
-            const selEl = document.getElementById('order-symbol-select');
-            if (selEl && selEl.value === sym) {
-              const pInput = document.getElementById('order-price-input');
-              if (pInput) pInput.value = ltp.toFixed(2);
-            }
-
-            // 5. Open Positions CMP
-            if (state.portfolio && state.portfolio.open_positions) {
-              const pos = state.portfolio.open_positions.find(p => p.symbol === sym);
-              if (pos) pos.current_price = ltp;
-            }
-          }
-        });
-
-        // Trigger immediate live portfolio tick & equity calculation
-        tickOpenPositionsLive();
-        return;
-      } else if (qData.status === false && (qData.errorcode === 'AG8001' || qData.errorcode === 'AG8002' || (qData.message && qData.message.toLowerCase().includes('token')))) {
-        console.warn('[SmartAPI] Session expired. Automatically refreshing today\'s JWT...');
-        localStorage.removeItem('stockai_angel_jwt_date');
-        saveAngelConfig();
-      }
-    } catch (e) {
-      console.warn('[SmartAPI] High-speed quote sync error:', e);
-    }
-  }
-
-  // 2. Fallback: Yahoo Finance direct (only if Angel One is not configured)
-  const openSyms = state.portfolio && state.portfolio.open_positions ? state.portfolio.open_positions.map(p => p.symbol) : [];
-  const symbolsToSync = [...new Set([...openSyms, 'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', state.currentSymbol])].filter(Boolean);
-  for (const sym of symbolsToSync.slice(0, 3)) {
-    try {
-      const quote = await fetchDirectYahooNSE(sym);
-      if (quote && quote.price > 0) {
-        if (!state.latestLivePrices) state.latestLivePrices = {};
-        state.latestLivePrices[sym] = quote.price;
-      }
-    } catch (e) {}
-  }
-}
-
-// Real-Time WebSocket Streaming
-function initWebSocket() {
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsHost = API_BASE.replace(/^https?:\/\//, '');
-  const wsUrl = `${wsProtocol}//${wsHost}/ws`;
-
-  try {
-    state.ws = new WebSocket(wsUrl);
-    state.ws.onopen = () => {
-      console.log('Connected to StockAI real-time stream');
-    };
-
-    state.ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'PRICE_TICK') {
-          if (msg.data && msg.data.prices) {
-            if (!state.latestLivePrices) state.latestLivePrices = {};
-            Object.assign(state.latestLivePrices, msg.data.prices);
-            tickOpenPositionsLive();
-          }
-        } else if (msg.type === 'SL_TP_TRIGGER') {
-          msg.data.forEach(trig => {
-            showToast(`🔔 ${trig.type}: ${trig.symbol} hit! Result: ${trig.result} (₹${trig.pnl})`, trig.result === 'WIN' ? 'success' : 'error');
-          });
-          loadPortfolio();
-        } else if (msg.type === 'AI_AUTO_TRADE_EXECUTED') {
-          msg.data.forEach(trade => {
-            showToast(`🤖 AI Auto-Trader entered ${trade.side} on ${trade.symbol} at ₹${trade.price}!`, 'info');
-          });
-          loadPortfolio();
-        } else if (msg.type === 'FLASH_NEWS_ALERT') {
-          showBreakingNewsPopup(msg.data);
-        }
-      } catch (e) {}
-    };
-
-    state.ws.onclose = () => {
-      setTimeout(initWebSocket, 6000);
-    };
-  } catch (err) {}
-}
-
-// Toast System with Anti-Spam Duplicate Suppression and Stack Limit
-const _recentToastsMap = new Map();
-
-function showToast(message, type = 'info') {
-  if (!message) return;
-  const container = document.getElementById('toast-container');
-  if (!container) return;
-
-  const now = Date.now();
-  // Suppress identical duplicate toasts within 8 seconds
-  if (_recentToastsMap.has(message) && (now - _recentToastsMap.get(message)) < 8000) {
-    return;
-  }
-  _recentToastsMap.set(message, now);
-
-  // Clean old entries from cache
-  if (_recentToastsMap.size > 50) {
-    for (const [k, v] of _recentToastsMap.entries()) {
-      if (now - v > 15000) _recentToastsMap.delete(k);
-    }
-  }
-
-  // Cap maximum visible toasts to 2 at any time (removes oldest if overflowing)
-  while (container.children.length >= 2) {
-    container.removeChild(container.firstChild);
-  }
-
-  const toast = document.createElement('div');
-  toast.className = 'toast';
-  let border = 'var(--color-cyan)';
-  if (type === 'success') border = 'var(--color-bullish)';
-  if (type === 'error') border = 'var(--color-bearish)';
-  toast.style.borderLeft = `4px solid ${border}`;
-  toast.textContent = message;
-
-  container.appendChild(toast);
+const DEFAULT_PORTFOLIO = {
+  total_equity: 100016.50,
+  cash_balance: 90211.00,
+  total_invested: 9789.00,
+  unrealized_pnl: 16.50,
+  open_positions: [
+    {
+      id: 1,
+      symbol: "ETERNAL.NS",
+      quantity: 30,
+      entry_price: 326.30,
+      current_price: 326.85,
+      stop_loss: 323.00,
+      target_price: 331.50,
+      unrealized_pnl: 16.50,
+      unrealized_pnl_pct: 0.17
+    }
+  ],
+  closed_positions: []
+};
+
+function showToast(msg, isSuccess = true) {
+  const t = document.getElementById('toast-container');
+  if (!t) return;
+  t.innerText = msg;
+  t.style.borderColor = isSuccess ? '#00f59b' : '#ff3366';
+  t.style.display = 'block';
   setTimeout(() => {
-    toast.style.opacity = '0';
-    setTimeout(() => toast.remove(), 250);
+    t.style.display = 'none';
   }, 3500);
 }
 
-// =============================================================================
-// Instant Breaking Flash News Pop-Up & Audio Alert System (No Refresh Needed!)
-// =============================================================================
-const CLIENT_SEEN_FLASH = new Set();
-let _stockAiAudioCtx = null;
-
-function unlockAudio() {
-  try {
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    if (AudioCtx && !_stockAiAudioCtx) {
-      _stockAiAudioCtx = new AudioCtx();
+function switchMainTab(tab) {
+  const tabs = ['calls', 'trades', 'ingest', 'settings'];
+  tabs.forEach(t => {
+    const el = document.getElementById(`view-${t}`);
+    const btn = document.getElementById(`tab-btn-${t}`);
+    if (el) el.style.display = t === tab ? 'block' : 'none';
+    if (btn) {
+      if (t === tab) btn.classList.add('active');
+      else btn.classList.remove('active');
     }
-    if (_stockAiAudioCtx && _stockAiAudioCtx.state === 'suspended') {
-      _stockAiAudioCtx.resume().catch(() => {});
-    }
-  } catch (e) {}
-}
-// Unlock Web Audio on first user interaction so chime alerts never get blocked by browser
-document.addEventListener('pointerdown', unlockAudio, { once: true });
-document.addEventListener('touchstart', unlockAudio, { once: true });
+  });
 
-function playAlertChime() {
-  try {
-    unlockAudio();
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = _stockAiAudioCtx || new AudioCtx();
-    if (ctx.state === 'suspended') {
-      ctx.resume().catch(() => {});
-    }
-    const now = ctx.currentTime;
-    // High-impact multi-tone loud chime: A5 (880Hz) -> E6 (1318Hz) -> A6 (1760Hz)
-    const osc1 = ctx.createOscillator();
-    const osc2 = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    osc1.type = 'sine';
-    osc1.frequency.setValueAtTime(880, now);
-    osc1.frequency.exponentialRampToValueAtTime(1318.51, now + 0.12);
-
-    osc2.type = 'triangle';
-    osc2.frequency.setValueAtTime(1760, now + 0.08);
-
-    gain.gain.setValueAtTime(0.70, now); // Loud and clear!
-    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.65);
-
-    osc1.connect(gain);
-    osc2.connect(gain);
-    gain.connect(ctx.destination);
-
-    osc1.start(now);
-    osc1.stop(now + 0.65);
-    osc2.start(now + 0.08);
-    osc2.stop(now + 0.65);
-  } catch (e) {
-    console.warn('Audio chime play error:', e);
+  if (tab === 'calls' || tab === 'trades') {
+    loadCallsAndPortfolio();
+  } else if (tab === 'settings') {
+    checkAngelStatus();
   }
 }
 
-function testAlertSound() {
-  unlockAudio();
-  playAlertChime();
-  showToast('🔊 Alert chime played! Your device audio is active.', 'success');
+function filterCategory(cat, btn) {
+  currentCategory = cat;
+  document.querySelectorAll('#view-calls button[id^="sub-cat-"]').forEach(b => {
+    b.className = 'btn btn-outline btn-sm';
+  });
+  if (btn) btn.className = 'btn btn-primary btn-sm';
+  loadCallsAndPortfolio();
 }
 
-function showBreakingNewsPopup(item) {
-  const container = document.getElementById('breaking-news-banner-container');
-  if (!container || !item) return;
+function togglePastCalls() {
+  showPastCalls = !showPastCalls;
+  const container = document.getElementById('past-calls-container');
+  const btn = document.getElementById('btn-toggle-past');
+  if (container) container.style.display = showPastCalls ? 'block' : 'none';
+  if (btn) btn.innerText = showPastCalls ? 'Hide ▲' : 'View All ▼';
+}
 
-  playAlertChime();
+async function loadCallsAndPortfolio() {
+  const banner = document.getElementById('server-status-banner');
 
-  const isBullish = (item.score || 0) >= 0;
-  const sym = item.matched_symbol || '^NSEI';
-  const name = item.matched_name || 'Broad Market';
-  const urg = item.urgency || '⚡ HIGH IMPACT';
-  const badgeColor = urg.includes('FLASH') ? '#ef4444' : '#f59e0b';
-  const why = item.why_action || (isBullish ? 'Positive catalyst triggers upside breakout momentum above intraday VWAP.' : 'Negative risk triggers downside selling pressure below support.');
-  const pos = item.positive_factors && item.positive_factors.length ? item.positive_factors : (isBullish ? ['Institutional Accumulation Inflow'] : []);
-  const neg = item.negative_risks && item.negative_risks.length ? item.negative_risks : (isBullish ? ['Near-term intraday volatility'] : ['Downside continuation risk']);
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
 
-  container.innerHTML = `
-    <div style="background:rgba(15, 23, 42, 0.96); backdrop-filter:blur(14px); border:2px solid ${badgeColor}; border-radius:12px; padding:12px 14px; box-shadow:0 12px 35px rgba(0,0,0,0.8), 0 0 20px ${badgeColor}40;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-        <div style="display:flex; align-items:center; gap:6px;">
-          <span style="display:inline-block; width:9px; height:9px; border-radius:50%; background:${badgeColor}; box-shadow:0 0 10px ${badgeColor};"></span>
-          <span class="badge" style="background:${badgeColor}; color:#000; font-size:0.68rem; font-weight:800; letter-spacing:0.5px;">${urg}</span>
-          <strong style="color:#06b6d4; font-size:0.82rem;">${name}</strong>
-        </div>
-        <button onclick="dismissBreakingNews()" style="background:none; border:none; color:var(--text-muted); font-size:1.1rem; cursor:pointer; line-height:1; padding:0 4px;">✕</button>
+    // 1. Fetch Angel One calls
+    const callsResp = await fetch(`${API_BASE}/api/angel-research/calls?category=${currentCategory}`, {
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    const callsData = await callsResp.json();
+    const calls = callsData.calls || [];
+
+    // 2. Fetch paper trading portfolio
+    const portResp = await fetch(`${API_BASE}/api/angel-research/portfolio`);
+    const port = await portResp.json();
+
+    if (banner) banner.style.display = 'none';
+    isConnected = true;
+
+    renderCalls(calls, port);
+    renderPortfolio(port);
+  } catch (err) {
+    console.warn('Backend not reachable, rendering fallback calls:', err);
+    if (banner) banner.style.display = 'flex';
+    isConnected = false;
+
+    // Filter fallback calls by category
+    const filteredFallback = currentCategory === 'ALL'
+      ? FALLBACK_CALLS
+      : FALLBACK_CALLS.filter(c => c.category.toUpperCase() === currentCategory.toUpperCase());
+
+    renderCalls(filteredFallback, DEFAULT_PORTFOLIO);
+    renderPortfolio(DEFAULT_PORTFOLIO);
+  }
+}
+
+function renderCalls(calls, port) {
+  const activeContainer = document.getElementById('active-calls-container');
+  const pastContainer = document.getElementById('past-calls-container');
+  const countBadge = document.getElementById('calls-badge-count');
+
+  if (!activeContainer) return;
+
+  const activeCalls = calls.filter(c => c.status === 'ACTIVE');
+  const pastCalls = calls.filter(c => c.status !== 'ACTIVE');
+
+  if (countBadge) countBadge.innerText = activeCalls.length;
+
+  // Render Active Today's Calls
+  if (activeCalls.length === 0) {
+    activeContainer.innerHTML = `
+      <div style="text-align:center; padding:35px 20px; background:rgba(15, 23, 42, 0.5); border:1px dashed rgba(255, 255, 255, 0.1); border-radius:14px;">
+        <span style="font-size:2rem;">📡</span>
+        <div style="font-weight:700; color:#ffffff; margin-top:8px;">Listening for Angel One ${currentCategory} Calls...</div>
+        <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">Angel One రీసెర్చ్ కాల్ ఇవ్వగానే AI వెంటనే క్యాచ్ చేసి ₹10,000 ఆటో-ట్రేడ్ చేస్తుంది!</div>
+        <button class="btn btn-primary btn-sm" onclick="triggerTestCall()" style="margin-top:14px; border-radius:8px;">
+          🚀 Test Sample Call Now
+        </button>
+      </div>
+    `;
+  } else {
+    activeContainer.innerHTML = activeCalls.map(c => generateCallCardHtml(c)).join('');
+  }
+
+  // Render Past Calls
+  if (pastContainer) {
+    if (pastCalls.length === 0) {
+      pastContainer.innerHTML = `<div style="text-align:center; padding:15px; color:var(--text-muted); font-size:0.8rem;">No past calls in this category.</div>`;
+    } else {
+      pastContainer.innerHTML = pastCalls.map(c => generateCallCardHtml(c, true)).join('');
+    }
+  }
+}
+
+function generateCallCardHtml(c, isPast = false) {
+  const sym = c.symbol.replace('.NS', '');
+  const ltp = c.current_price || c.entry_price;
+  const isBuy = c.action.toUpperCase() === 'BUY';
+  const entry = c.entry_price;
+  const sl = c.stop_loss;
+  const tgt = c.target_price;
+  
+  const achieved = c.achieved_pct || 0.0;
+  const potential = c.potential_pct || 0.0;
+  
+  const changePct = entry > 0 ? (((ltp - entry) / entry) * 100).toFixed(2) : 0.0;
+  const isPos = parseFloat(changePct) >= 0;
+
+  let statusBadge = '';
+  if (c.status === 'TARGET_ACHIEVED') {
+    statusBadge = `<span style="background:rgba(0, 245, 155, 0.2); color:#00f59b; border:1px solid #00f59b; padding:3px 8px; border-radius:6px; font-weight:800; font-size:0.7rem;">🎯 TARGET ACHIEVED (+${achieved}%)</span>`;
+  } else if (c.status === 'SL_HIT') {
+    statusBadge = `<span style="background:rgba(255, 51, 102, 0.2); color:#ff3366; border:1px solid #ff3366; padding:3px 8px; border-radius:6px; font-weight:800; font-size:0.7rem;">🛑 STOP LOSS HIT</span>`;
+  } else {
+    statusBadge = `
+      <div class="auto-trade-pill">
+        <span>⚡ Auto Paper Traded: ${c.quantity || Math.max(1, Math.floor(10000 / entry))} Qty (~₹10,000)</span>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="call-card">
+      <div class="analyst-badge">
+        <span>🟢 ${c.call_type || 'Analyst call'}</span>
+        <span style="color:var(--text-muted); font-weight:500;">• Updated live</span>
       </div>
 
-      <div style="font-size:0.84rem; font-weight:700; color:#fff; line-height:1.3; margin-bottom:6px;">
-        ${item.title}
+      <div class="call-card-top">
+        <div class="stock-badge-wrap">
+          <div class="stock-avatar" style="${sym === 'ETERNAL' ? 'background:#e11d48;' : 'background:linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);'}">
+            ${sym.substring(0, 3)}
+          </div>
+          <div>
+            <div class="stock-name-title">
+              <span>${sym}</span>
+              <span class="exchange-tag">NSE</span>
+            </div>
+            <div style="font-size:0.72rem; color:var(--text-muted);">${c.company_name || sym}</div>
+          </div>
+        </div>
+
+        <div class="cmp-display">
+          <div class="cmp-price">₹${ltp.toFixed(2)}</div>
+          <div class="cmp-change" style="color:${isPos ? '#00f59b' : '#ff3366'};">
+            ${isPos ? '▲ +' : '▼ '}${changePct}%
+          </div>
+        </div>
       </div>
 
-      <!-- Why Action & Factors Pill Box -->
-      <div style="background:rgba(0,0,0,0.3); border-radius:6px; padding:6px 8px; margin-bottom:8px; border-left:3px solid ${isBullish ? '#00F59B' : '#FF3366'};">
-        <div style="font-size:0.75rem; color:#cbd5e1; line-height:1.35;">
-          <strong style="color:${isBullish ? '#00F59B' : '#FF3366'};">💡 Why ${isBullish ? 'Buy' : 'Sell'}:</strong> ${why}
+      <!-- SL - Entry - Target Road Map -->
+      <div class="price-road-map">
+        <div class="progress-road-line"></div>
+
+        <div class="price-node">
+          <div class="price-node-badge sl">SL</div>
+          <div class="price-node-label">Stop Loss</div>
+          <div class="price-node-val">₹${sl.toFixed(2)}</div>
         </div>
-        <div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:4px;">
-          ${pos.map(p => `<span style="background:rgba(0,245,155,0.14); color:#00F59B; font-size:0.62rem; padding:1px 5px; border-radius:3px;">+ ${p}</span>`).join('')}
-          ${neg.map(n => `<span style="background:rgba(255,51,102,0.14); color:#FF3366; font-size:0.62rem; padding:1px 5px; border-radius:3px;">⚠ ${n}</span>`).join('')}
+
+        <div class="price-node">
+          <div class="price-node-badge entry">${isBuy ? 'B' : 'S'}</div>
+          <div class="price-node-label">Entry</div>
+          <div class="price-node-val">₹${entry.toFixed(2)}</div>
+        </div>
+
+        <div class="price-node">
+          <div class="price-node-badge target">${isBuy ? 'S' : 'B'}</div>
+          <div class="price-node-label">Target</div>
+          <div class="price-node-val">₹${tgt.toFixed(2)}</div>
         </div>
       </div>
 
-      <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid rgba(255,255,255,0.08); padding-top:8px;">
-        <div style="font-size:0.75rem;">
-          <span style="color:var(--text-muted);">Expected Move:</span>
-          <strong style="color:${isBullish ? '#00F59B' : '#FF3366'}; margin-left:4px;">${item.projected_move || 'Catalyst move'}</strong>
+      <div class="call-footer">
+        <div class="potential-stats">
+          <span>• Achieved: <strong style="color:${achieved > 0 ? '#00f59b' : '#ffffff'};">${achieved}%</strong></span>
+          <span>• Potential Left: <strong style="color:#00e5ff;">${potential}%</strong></span>
         </div>
-        <div style="display:flex; gap:6px;">
-          ${item.matched_symbol ? `
-            <button class="btn ${isBullish ? 'btn-bullish' : 'btn-bearish'} btn-sm" style="font-size:0.72rem; padding:4px 10px; font-weight:700;" onclick="handleFlashNewsAction('${item.matched_symbol}', '${isBullish ? 'BUY' : 'SELL'}')">
-              ⚡ Trade Now
-            </button>
-          ` : `
-            <button class="btn btn-outline btn-sm" style="font-size:0.72rem; padding:4px 10px;" onclick="switchTab('news'); dismissBreakingNews();">
-              View News
-            </button>
-          `}
+
+        <div style="display:flex; align-items:center; gap:8px;">
+          ${statusBadge}
+          <button class="btn-buy-action" style="${isPast ? 'background:#334155; color:#94a3b8; box-shadow:none;' : ''}">
+            ${isPast ? 'CLOSED' : (isBuy ? 'BUY' : 'SELL')}
+          </button>
         </div>
       </div>
     </div>
   `;
-  container.style.display = 'block';
-
-  // Auto-dismiss after 25 seconds
-  clearTimeout(window._breakingNewsTimer);
-  window._breakingNewsTimer = setTimeout(dismissBreakingNews, 25000);
 }
 
-function dismissBreakingNews() {
-  const container = document.getElementById('breaking-news-banner-container');
-  if (container) container.style.display = 'none';
-}
+function renderPortfolio(port) {
+  const equityVal = document.getElementById('header-equity-val');
+  const portEquity = document.getElementById('port-equity-val');
+  const portCash = document.getElementById('port-cash-val');
+  const portInvested = document.getElementById('port-invested-val');
+  const portPnl = document.getElementById('port-unrealized-pnl');
+  const openCountBadge = document.getElementById('open-trades-count');
+  const openList = document.getElementById('open-positions-list');
+  const closedList = document.getElementById('closed-positions-list');
 
-function handleFlashNewsAction(symbol, side) {
-  dismissBreakingNews();
-  const match = state.watchlist.find(s => s.symbol === symbol) || DEFAULT_INDIAN_STOCKS.find(s => s.symbol === symbol);
-  let cmp = match && match.price > 0 ? match.price : 0;
-  if (!cmp || cmp <= 0) cmp = 500.0;
+  const eq = port.total_equity || 100000;
+  const cash = port.cash_balance || 100000;
+  const invested = port.total_invested || 0;
+  const uPnl = port.unrealized_pnl || 0;
+  const openPositions = port.open_positions || [];
+  const closedPositions = port.closed_positions || [];
+
+  if (equityVal) equityVal.innerText = `₹${Math.round(eq).toLocaleString('en-IN')}`;
+  if (portEquity) portEquity.innerText = `₹${Math.round(eq).toLocaleString('en-IN')}`;
+  if (portCash) portCash.innerText = `₹${Math.round(cash).toLocaleString('en-IN')}`;
+  if (portInvested) portInvested.innerText = `₹${Math.round(invested).toLocaleString('en-IN')}`;
   
-  const vParams = getStockVolatilityParameters(symbol, cmp);
-  const sl = side === 'BUY' ? Math.round(cmp * (1 - vParams.slPct) * 100) / 100 : Math.round(cmp * (1 + vParams.slPct) * 100) / 100;
-  const tp = side === 'BUY' ? Math.round(cmp * (1 + vParams.tp1Pct) * 100) / 100 : Math.round(cmp * (1 - vParams.tp1Pct) * 100) / 100;
-  quickTradePrompt(symbol, side, cmp, sl, tp);
-}
+  if (portPnl) {
+    const isPnlPos = uPnl >= 0;
+    portPnl.innerText = `${isPnlPos ? '+' : ''}₹${uPnl.toFixed(2)}`;
+    portPnl.style.color = isPnlPos ? '#00f59b' : '#ff3366';
+  }
 
-// Quick Test Trigger for User
-function testLiveNewsAlert() {
-  const sampleCatalysts = [
-    {
-      title: "🚨 BREAKING: Tata Motors EV bags ₹4,850 Cr public transport mega contract; shares surge +4.2%",
-      matched_symbol: "TMPV.NS",
-      matched_name: "Tata Motors PV",
-      urgency: "⚡ HIGH IMPACT",
-      score: 0.85,
-      projected_move: "+3.2% to +5.5% Upside Surge",
-      action_advice: "BUY ON BREAKOUT",
-      why_action: "₹4,850 Cr mega order expands 3-year revenue backlog and triggers heavy institutional accumulation.",
-      positive_factors: ["₹4,850 Cr Order Book Win", "EV Market Dominance", "FII Volume Inflows"],
-      negative_risks: ["Near-term profit booking at 52-week peak"]
-    },
-    {
-      title: "⚡ TCS reports robust ₹12,800 Cr quarterly net profit; announces special dividend of ₹28/sh",
-      matched_symbol: "TCS.NS",
-      matched_name: "Tata Consultancy Services",
-      urgency: "⚡ HIGH IMPACT",
-      score: 0.78,
-      projected_move: "+2.5% to +4.0% Bullish Rally",
-      action_advice: "BUY ON BREAKOUT",
-      why_action: "Net profit beat and ₹28/sh special dividend signal massive free cash flows and strong enterprise AI contracts.",
-      positive_factors: ["Net Profit Beat (+16% YoY)", "₹28/share Special Dividend", "Margin Expansion"],
-      negative_risks: ["Global macro discretionary spend slowdown"]
-    },
-    {
-      title: "🚨 HDFC Bank Q2 net profit jumps 16.8% YoY; gross NPA drops to multi-year low of 1.15%",
-      matched_symbol: "HDFCBANK.NS",
-      matched_name: "HDFC Bank",
-      urgency: "⚡ HIGH IMPACT",
-      score: 0.90,
-      projected_move: "+2.0% to +3.8% Upside",
-      action_advice: "BUY ON DIP",
-      why_action: "16.8% profit growth and record low 1.15% NPA remove asset quality concerns, attracting aggressive FII buying.",
-      positive_factors: ["Gross NPA Drops to 1.15%", "16.8% Net Profit Surge", "Systemic Deposit Growth"],
-      negative_risks: ["High base effect for next quarter"]
+  if (openCountBadge) openCountBadge.innerText = openPositions.length;
+
+  // Render Open Positions
+  if (openList) {
+    if (openPositions.length === 0) {
+      openList.innerHTML = `
+        <div style="text-align:center; padding:25px; background:rgba(15, 23, 42, 0.4); border-radius:12px; color:var(--text-muted); font-size:0.8rem;">
+          No active paper positions. New Angel One calls will auto-execute here with ₹10,000 allocation.
+        </div>
+      `;
+    } else {
+      openList.innerHTML = openPositions.map(p => {
+        const pnl = p.unrealized_pnl || 0.0;
+        const pnlPct = p.unrealized_pnl_pct || 0.0;
+        const isPos = pnl >= 0;
+        return `
+          <div class="call-card" style="margin-bottom:10px; padding:12px 14px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <span style="font-weight:800; font-size:1rem; color:#ffffff;">${p.symbol.replace('.NS', '')}</span>
+                <span class="badge" style="background:rgba(0, 229, 255, 0.15); color:#00e5ff; font-size:0.68rem; margin-left:6px; font-weight:800;">
+                  ${p.quantity} SHARES (~₹${(p.entry_price * p.quantity).toFixed(0)})
+                </span>
+                <div style="font-size:0.72rem; color:var(--text-muted); margin-top:2px;">
+                  Entry: ₹${p.entry_price.toFixed(2)} | Target: ₹${(p.target_price || 0).toFixed(2)} | SL: ₹${(p.stop_loss || 0).toFixed(2)}
+                </div>
+              </div>
+
+              <div style="text-align:right;">
+                <div style="font-weight:800; font-size:1rem; font-family:var(--font-mono); color:${isPos ? '#00f59b' : '#ff3366'};">
+                  ${isPos ? '+' : ''}₹${pnl.toFixed(2)} (${isPos ? '+' : ''}${pnlPct}%)
+                </div>
+                <div style="font-size:0.7rem; color:var(--text-muted);">CMP: ₹${p.current_price.toFixed(2)}</div>
+                <button class="btn btn-outline btn-sm" onclick="closePosition(${p.id}, ${p.current_price})" style="font-size:0.68rem; padding:2px 8px; margin-top:4px; border-color:rgba(255, 255, 255, 0.2);">
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
     }
-  ];
-  const item = sampleCatalysts[Math.floor(Math.random() * sampleCatalysts.length)];
-  showBreakingNewsPopup(item);
-  showToast(`Simulated Live Breaking News Alert triggered!`, 'success');
+  }
+
+  // Render Closed Positions History
+  if (closedList) {
+    if (closedPositions.length === 0) {
+      closedList.innerHTML = `<div style="text-align:center; padding:15px; color:var(--text-muted); font-size:0.75rem;">No closed trades yet.</div>`;
+    } else {
+      closedList.innerHTML = closedPositions.map(p => {
+        const pnl = p.realized_pnl || 0.0;
+        const isPos = pnl >= 0;
+        return `
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:rgba(15, 23, 42, 0.5); border-radius:10px; margin-bottom:8px; border:1px solid rgba(255, 255, 255, 0.05);">
+            <div>
+              <span style="font-weight:700; color:#ffffff;">${p.symbol.replace('.NS', '')}</span>
+              <span style="font-size:0.68rem; margin-left:6px; color:var(--text-muted);">
+                ${p.close_reason || 'CLOSED'} • ${p.quantity} Qty
+              </span>
+            </div>
+            <div style="font-weight:800; font-family:var(--font-mono); color:${isPos ? '#00f59b' : '#ff3366'};">
+              ${isPos ? '+' : ''}₹${pnl.toFixed(2)}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
 }
 
-// Auto-poll flash news in background every 30s to ensure zero missed catalysts
-setInterval(async () => {
+async function connectAngelOne() {
+  const btn = document.getElementById('btn-connect-angel');
+  const badge = document.getElementById('angel-status-badge');
+  const clientCode = document.getElementById('angel-client-code').value.trim();
+  const apiKey = document.getElementById('angel-api-key').value.trim();
+  const password = document.getElementById('angel-password').value.trim();
+  const totp = document.getElementById('angel-totp').value.trim();
+
+  if (!clientCode || !apiKey || !password || !totp) {
+    showToast('Please fill all Angel One credentials!', false);
+    return;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerText = 'Connecting to SmartAPI...';
+  }
+
   try {
-    const res = await fetch(`${API_BASE}/api/news/flash`);
-    if (!res.ok) return;
-    const items = await res.json();
-    if (items && items.length > 0) {
-      for (const item of items.slice(0, 5)) {
-        const urg = (item.urgency || '').toUpperCase();
-        const score = Math.abs(item.score || 0);
-        // Alert if HIGH impact or strong directional sentiment (|score| >= 0.40)
-        if ((urg.includes('FLASH') || urg.includes('HIGH') || score >= 0.40) && !CLIENT_SEEN_FLASH.has(item.title)) {
-          CLIENT_SEEN_FLASH.add(item.title);
-          showBreakingNewsPopup(item);
-          break; // Show top item first
-        }
+    const resp = await fetch(`${API_BASE}/api/settings/angel-one`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_code: clientCode,
+        api_key: apiKey,
+        password: password,
+        totp_secret: totp
+      })
+    });
+    const res = await resp.json();
+
+    if (res.success || res.authenticated) {
+      showToast('🎉 Connected to Angel One SmartAPI successfully!');
+      if (badge) {
+        badge.innerText = `🟢 Connected (${res.client_code || clientCode})`;
+        badge.style.background = 'rgba(0, 245, 155, 0.2)';
+        badge.style.color = '#00f59b';
+        badge.style.borderColor = '#00f59b';
+      }
+    } else {
+      showToast('Connection failed: ' + (res.message || 'Check credentials'), false);
+      if (badge) {
+        badge.innerText = '🔴 Auth Failed';
+        badge.style.background = 'rgba(255, 51, 102, 0.2)';
+        badge.style.color = '#ff3366';
+        badge.style.borderColor = '#ff3366';
       }
     }
-  } catch (e) {}
-}, 30000);
+  } catch (e) {
+    showToast('Network error connecting to backend: ' + e, false);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerText = '🔗 Connect Angel One Account';
+    }
+  }
+}
+
+async function checkAngelStatus() {
+  const badge = document.getElementById('angel-status-badge');
+  if (!badge) return;
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/settings/angel-one`);
+    const data = await resp.json();
+    if (data.authenticated) {
+      badge.innerText = `🟢 Connected (${data.client_code})`;
+      badge.style.background = 'rgba(0, 245, 155, 0.2)';
+      badge.style.color = '#00f59b';
+      badge.style.borderColor = '#00f59b';
+    } else if (data.configured) {
+      badge.innerText = `🟡 Configured (${data.client_code})`;
+      badge.style.background = 'rgba(245, 158, 11, 0.2)';
+      badge.style.color = '#f59e0b';
+      badge.style.borderColor = '#f59e0b';
+    } else {
+      badge.innerText = '🔴 Disconnected';
+      badge.style.background = 'rgba(255, 51, 102, 0.2)';
+      badge.style.color = '#ff3366';
+      badge.style.borderColor = '#ff3366';
+    }
+  } catch (e) {
+    // Keep quiet if offline
+  }
+}
+
+async function triggerTestCall() {
+  const btn = document.getElementById('btn-trigger-test');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerText = '⚡ Catching Angel One Call & Trading ₹10k...';
+  }
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/angel-research/test-call`, { method: 'POST' });
+    const data = await resp.json();
+    if (data.success) {
+      showToast(`🚀 New Angel One Call: ${data.symbol}! Auto-Executed ₹10,000 Paper Trade!`);
+      loadCallsAndPortfolio();
+      switchMainTab('calls');
+    } else {
+      showToast('Test failed: ' + (data.message || 'Unknown'), false);
+    }
+  } catch (err) {
+    showToast('Network error triggering call: ' + err, false);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerText = '🚀 Trigger Sample Angel One Call (Instant ₹10k Trade)';
+    }
+  }
+}
+
+async function parseAndTradeNotification() {
+  const txt = document.getElementById('raw-notification-input').value.trim();
+  if (!txt) {
+    showToast('Please paste a notification text first!', false);
+    return;
+  }
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/angel-research/parse-text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: txt })
+    });
+    const res = await resp.json();
+    if (res.success) {
+      showToast(`✅ Successfully parsed & executed ₹10,000 trade for ${res.parsed.symbol}!`);
+      document.getElementById('raw-notification-input').value = '';
+      loadCallsAndPortfolio();
+      switchMainTab('calls');
+    } else {
+      showToast(res.message || 'Could not parse values from text', false);
+    }
+  } catch (e) {
+    showToast('Error parsing text: ' + e, false);
+  }
+}
+
+async function closePosition(posId, price) {
+  try {
+    const resp = await fetch(`${API_BASE}/api/paper/close/${posId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current_price: price, reason: 'MANUAL_EXIT' })
+    });
+    const data = await resp.json();
+    showToast(data.message || 'Position closed');
+    loadCallsAndPortfolio();
+  } catch (e) {
+    showToast('Failed to close position: ' + e, false);
+  }
+}
+
+async function resetPortfolio() {
+  if (!confirm('Are you sure you want to reset virtual paper portfolio to ₹1,00,000?')) return;
+  try {
+    const resp = await fetch(`${API_BASE}/api/paper/reset`, { method: 'POST' });
+    const res = await resp.json();
+    showToast(res.message || 'Portfolio reset');
+    loadCallsAndPortfolio();
+  } catch (e) {
+    showToast('Reset failed: ' + e, false);
+  }
+}
+
+function saveServerUrl() {
+  const inp = document.getElementById('setting-server-url');
+  if (!inp) return;
+  const url = inp.value.trim();
+  if (url) {
+    localStorage.setItem('stockai_server_url', url);
+    showToast('Backend Server URL saved!');
+    setTimeout(() => location.reload(), 800);
+  }
+}
+
+// Initialization & Auto-Polling
+window.addEventListener('DOMContentLoaded', () => {
+  const savedUrl = localStorage.getItem('stockai_server_url') || '';
+  const urlInp = document.getElementById('setting-server-url');
+  if (urlInp) urlInp.value = savedUrl;
+
+  loadCallsAndPortfolio();
+  checkAngelStatus();
+
+  // Polling every 3.5 seconds to refresh live quotes & SL/TP triggers
+  pollingTimer = setInterval(loadCallsAndPortfolio, 3500);
+});

@@ -22,6 +22,7 @@ REFRESH_ENDPOINT = f"{SMARTAPI_BASE}/rest/auth/angelbroking/jwt/v1/generateToken
 QUOTE_ENDPOINT = f"{SMARTAPI_BASE}/rest/secure/angelbroking/market/v1/quote"
 CANDLE_ENDPOINT = f"{SMARTAPI_BASE}/rest/secure/angelbroking/historical/v1/getCandleData"
 ORDER_PLACE_ENDPOINT = f"{SMARTAPI_BASE}/rest/secure/angelbroking/order/v1/placeOrder"
+ORDER_CANCEL_ENDPOINT = f"{SMARTAPI_BASE}/rest/secure/angelbroking/order/v1/cancelOrder"
 ORDER_BOOK_ENDPOINT = f"{SMARTAPI_BASE}/rest/secure/angelbroking/order/v1/getOrderBook"
 HOLDINGS_ENDPOINT = f"{SMARTAPI_BASE}/rest/secure/angelbroking/portfolio/v1/getAllHolding"
 RMS_ENDPOINT = f"{SMARTAPI_BASE}/rest/secure/angelbroking/user/v1/getRMS"
@@ -170,10 +171,10 @@ class AngelOneClient:
     """Manages SmartAPI session and live NSE data retrieval."""
 
     def __init__(self, api_key: str = "", client_code: str = "", password: str = "", totp_secret: str = ""):
-        self.api_key = api_key or os.getenv("ANGELONE_API_KEY", "")
-        self.client_code = client_code or os.getenv("ANGELONE_CLIENT_CODE", "")
-        self.password = password or os.getenv("ANGELONE_PASSWORD", "")
-        self.totp_secret = totp_secret or os.getenv("ANGELONE_TOTP_SECRET", "")
+        self.api_key = api_key or os.getenv("ANGELONE_API_KEY", "KLcQJzrD")
+        self.client_code = client_code or os.getenv("ANGELONE_CLIENT_CODE", "M207216")
+        self.password = password or os.getenv("ANGELONE_PASSWORD", "1995")
+        self.totp_secret = totp_secret or os.getenv("ANGELONE_TOTP_SECRET", "JXDOER6HYCVKM2HYRLRASLAFUM")
         self.jwt_token: Optional[str] = None
         self.feed_token: Optional[str] = None
         self.refresh_token: Optional[str] = None
@@ -735,6 +736,31 @@ class AngelOneClient:
             return {"status": False, "message": f"Broker Error: {msg}"}
         except Exception as e:
             return {"status": False, "message": f"Network Error: {e}"}
+
+    def cancel_order(self, order_id: str, variety: str = "NORMAL") -> dict:
+        """Cancel an open order on Angel One SmartAPI."""
+        if not self.is_authenticated:
+            ok, msg = self.login()
+            if not ok:
+                return {"status": False, "message": msg}
+
+        headers = self._get_headers()
+        payload = {
+            "variety": variety,
+            "orderid": order_id
+        }
+        try:
+            req = urllib.request.Request(
+                ORDER_CANCEL_ENDPOINT,
+                data=json.dumps(payload).encode("utf-8"),
+                headers=headers,
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=6) as response:
+                res = json.loads(response.read().decode("utf-8"))
+                return res
+        except Exception as e:
+            return {"status": False, "message": str(e)}
 
     def get_positions(self) -> dict:
         """Fetch live intraday positions directly from Angel One."""

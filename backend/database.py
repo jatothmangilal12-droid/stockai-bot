@@ -86,6 +86,32 @@ def init_db():
     )
     """)
 
+    # Angel One Research Recommendations Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS angel_research_calls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        call_id TEXT UNIQUE,
+        symbol TEXT NOT NULL,
+        company_name TEXT,
+        call_type TEXT DEFAULT 'Analyst call',
+        category TEXT DEFAULT 'Intraday',
+        action TEXT NOT NULL,
+        entry_price REAL NOT NULL,
+        stop_loss REAL NOT NULL,
+        target_price REAL NOT NULL,
+        current_price REAL,
+        potential_pct REAL DEFAULT 0.0,
+        achieved_pct REAL DEFAULT 0.0,
+        status TEXT DEFAULT 'ACTIVE',
+        auto_traded INTEGER DEFAULT 0,
+        allocated_amount REAL DEFAULT 10000.0,
+        quantity INTEGER DEFAULT 0,
+        position_id INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     # Check for missing columns in existing positions table (Auto Migration)
     cursor.execute("PRAGMA table_info(positions)")
     existing_cols = [c[1] for c in cursor.fetchall()]
