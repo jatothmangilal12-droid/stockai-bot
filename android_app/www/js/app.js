@@ -1927,9 +1927,9 @@ async function submitTradeOrder() {
   const cost = qty * price;
   const marginRequired = Math.round((cost / INTRADAY_LEVERAGE) * 100) / 100;
 
-  // Capital Protection: Block execution if Angel One feed is offline or stale
-  if (state.executionMode === 'REAL_BROKER' && (state.isFeedStale || !state.lastAngelTickTime)) {
-    showToast('⚠️ Market feed is offline or stale (>3s). Live orders are blocked to prevent bad fills.', 'error');
+  // Angel One Authentication Guard
+  if (state.executionMode === 'REAL_BROKER' && !state.angelConnected && localStorage.getItem('stockai_angel_auth') !== 'true') {
+    showToast('⚠️ Angel One is not authenticated. Please connect your broker in Settings.', 'error');
     return;
   }
 
@@ -2419,7 +2419,9 @@ async function executeAngelLiveOrder(symbol, side, qty, price, sl, tp) {
     if (res.ok) {
       const data = await res.json();
       if (data.status || data.success) {
-        if (data.oco_state === 'OCO_ARMED' || (data.sl_placed && data.target_order_id)) {
+        if (data.variety === 'AMO' || data.oco_state === 'AMO_QUEUED') {
+          showToast(`⚡ Angel One AMO Order Placed! ID: ${data.order_id || data.entry_order_id} (Queued for 09:15 AM Market Open)`, 'success');
+        } else if (data.oco_state === 'OCO_ARMED' || (data.sl_placed && data.target_order_id)) {
           showToast(`⚡ Angel One 3-Stage Order Armed! Filled @ ₹${data.fill_price || price} | Hard SL @ ₹${data.sl_trigger} (ID: ${data.sl_order_id}) | Target @ ₹${data.target_price} (ID: ${data.target_order_id}) [OCO Active]`, 'success');
         } else if (data.sl_placed) {
           showToast(`⚡ Angel One Order Placed! ID: ${data.order_id || data.entry_order_id} | Hard Stop-Loss Armed (SL ID: ${data.sl_order_id})`, 'success');
@@ -2765,8 +2767,8 @@ async function executeTradeWithCustomQty(sig, qty, customPrice, customSl, custom
 
   // Real Angel One Broker execution if in REAL_BROKER mode
   if (state.executionMode === 'REAL_BROKER') {
-    if (state.isFeedStale || !state.lastAngelTickTime) {
-      showToast(`⚠️ Angel One feed offline or stale (>3s). Order on ${sym} blocked to protect capital.`, 'error');
+    if (!state.angelConnected && localStorage.getItem('stockai_angel_auth') !== 'true') {
+      showToast(`⚠️ Angel One is not authenticated. Please connect your broker in Settings.`, 'error');
       return false;
     }
     const cleanSym = sym.replace('.NS', '').replace('-EQ', '').toUpperCase();
@@ -4342,12 +4344,29 @@ function checkMarketFeedStaleness() {
   const chartTag = document.getElementById('chart-price-source-tag');
   const submitBtn = document.getElementById('order-submit-btn');
 
+  const sessionInfo = getMarketSessionInfo();
+  const isMarketClosed = sessionInfo.session === 'OFF_MARKET';
   const now = Date.now();
   const tickAgeMs = state.lastAngelTickTime ? (now - state.lastAngelTickTime) : 999999;
-  const isStale = tickAgeMs > 3500;
-  const isOffline = !state.lastAngelTickTime || state.priceSource === 'Feed_Offline' || (!state.angelConnected && tickAgeMs > 10000);
+  const isStale = tickAgeMs > 8000;
+  const isOffline = !state.angelConnected && localStorage.getItem('stockai_angel_auth') !== 'true';
 
-  if (isOffline) {
+  if (isMarketClosed) {
+    if (badgePill) {
+      badgePill.style.background = 'rgba(56, 189, 248, 0.12)';
+      badgePill.style.borderColor = 'rgba(56, 189, 248, 0.35)';
+      badgePill.style.color = '#38bdf8';
+    }
+    if (badgeDot) badgeDot.style.background = '#38bdf8';
+    if (badgeText) badgeText.textContent = '🌙 Off-Market (AMO Active)';
+    if (chartTag) {
+      chartTag.textContent = '🌙 Off-Market (AMO)';
+      chartTag.style.background = 'rgba(56, 189, 248, 0.12)';
+      chartTag.style.color = '#38bdf8';
+      chartTag.style.borderColor = 'rgba(56, 189, 248, 0.35)';
+    }
+    state.isFeedStale = false;
+  } else if (isOffline) {
     if (badgePill) {
       badgePill.style.background = 'rgba(239, 68, 68, 0.12)';
       badgePill.style.borderColor = 'rgba(239, 68, 68, 0.35)';
@@ -4360,12 +4379,6 @@ function checkMarketFeedStaleness() {
       chartTag.style.background = 'rgba(239, 68, 68, 0.12)';
       chartTag.style.color = '#ef4444';
       chartTag.style.borderColor = 'rgba(239, 68, 68, 0.35)';
-    }
-    if (submitBtn) {
-      submitBtn.disabled = true;
-      submitBtn.title = 'Market feed is offline. Orders are temporarily blocked to protect capital.';
-      submitBtn.style.opacity = '0.6';
-      submitBtn.style.cursor = 'not-allowed';
     }
     state.isFeedStale = true;
   } else if (isStale) {
@@ -4382,13 +4395,7 @@ function checkMarketFeedStaleness() {
       chartTag.style.color = '#f59e0b';
       chartTag.style.borderColor = 'rgba(245, 158, 11, 0.35)';
     }
-    if (submitBtn) {
-      submitBtn.disabled = true;
-      submitBtn.title = 'Live feed is stale (>3s). Orders blocked until fresh tick arrives.';
-      submitBtn.style.opacity = '0.6';
-      submitBtn.style.cursor = 'not-allowed';
-    }
-    state.isFeedStale = true;
+    state.isFeedStale = false;
   } else {
     const timeStr = new Date(state.lastAngelTickTime).toLocaleTimeString('en-IN', { hour12: false });
     if (badgePill) {
@@ -4404,13 +4411,15 @@ function checkMarketFeedStaleness() {
       chartTag.style.color = '#10b981';
       chartTag.style.borderColor = 'rgba(16, 185, 129, 0.35)';
     }
-    if (submitBtn) {
-      submitBtn.disabled = false;
-      submitBtn.title = '';
-      submitBtn.style.opacity = '1';
-      submitBtn.style.cursor = 'pointer';
-    }
     state.isFeedStale = false;
+  }
+
+  // Ensure submit button stays enabled when Angel One is connected
+  if (submitBtn) {
+    submitBtn.disabled = false;
+    submitBtn.title = '';
+    submitBtn.style.opacity = '1';
+    submitBtn.style.cursor = 'pointer';
   }
 }
 

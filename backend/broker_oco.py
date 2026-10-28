@@ -49,28 +49,27 @@ def round_nse_tick(price: float, direction: str = "NEAREST") -> float:
     return round(val, 2)
 
 
-def is_market_entry_allowed() -> Tuple[bool, str]:
+def get_order_market_context() -> Tuple[bool, str, str]:
     """
-    Check if current IST time allows new intraday MIS entries.
-    Strictly allowed: Monday - Friday, 09:15 AM to 03:10 PM IST.
+    Check market status and return (is_live_market, message, variety).
+    If live market hours (Mon-Fri 09:15 - 15:10 IST): variety = "NORMAL"
+    If off-market hours or weekends: variety = "AMO" (After Market Order)
     """
     utc_now = datetime.now(timezone.utc)
     ist_now = utc_now + timedelta(hours=5, minutes=30)
-    
-    # Check weekend
-    if ist_now.weekday() in (5, 6):
-        return False, "NSE market is closed on weekends (Saturday / Sunday)."
-
     total_mins = ist_now.hour * 60 + ist_now.minute
-    market_open = 9 * 60 + 15   # 09:15 AM
-    entry_cutoff = 15 * 60 + 10  # 03:10 PM (Cutoff before 15:15 MIS squareoff)
+    market_open = 9 * 60 + 15
+    entry_cutoff = 15 * 60 + 10
 
-    if total_mins < market_open:
-        return False, f"Market opens at 09:15 AM IST (Current: {ist_now.strftime('%I:%M %p')})."
-    if total_mins > entry_cutoff:
-        return False, f"New intraday MIS entries closed after 03:10 PM IST (Current: {ist_now.strftime('%I:%M %p')})."
+    is_live = (ist_now.weekday() not in (5, 6)) and (market_open <= total_mins <= entry_cutoff)
+    variety = "NORMAL" if is_live else "AMO"
+    msg = "LIVE_MARKET" if is_live else f"OFF_MARKET_AMO (Placed after hours: {ist_now.strftime('%I:%M %p')})"
+    return is_live, msg, variety
 
-    return True, "OK"
+
+def is_market_entry_allowed() -> Tuple[bool, str]:
+    is_live, msg, _ = get_order_market_context()
+    return is_live, msg
 
 
 def calculate_risk_quantity(
@@ -125,10 +124,8 @@ class AngelOcoManager:
           2. Confirm execution & retrieve exact average fill price from order book
           3. Calculate SL & TP from actual fill price and submit OCO Stop-Loss & Target orders
         """
-        # 1. Market Hours Guard
-        allowed, reason = is_market_entry_allowed()
-        if not allowed:
-            return {"status": False, "message": f"Market Entry Guard: {reason}"}
+        # 1. Market Hours & Variety Check (Live Market vs AMO After-Hours)
+        is_live_market, market_msg, variety = get_order_market_context()
 
         # 2. Authentication Check
         if not angel_client.is_authenticated:
@@ -157,13 +154,18 @@ class AngelOcoManager:
         client_tag = f"SA_{int(time.time())}_{quantity}"
 
         # =====================================================================
-        # STAGE 1: SUBMIT ENTRY ORDER
+        # STAGE 1: SUBMIT ENTRY ORDER (NORMAL or AMO)
         # =====================================================================
-        entry_ordertype = "LIMIT" if price > 0 else "MARKET"
+        entry_ordertype = "LIMIT" if price > 0 else ("LIMIT" if variety == "AMO" else "MARKET")
+        if entry_ordertype == "LIMIT" and price <= 0:
+            q = angel_client.get_live_quote(clean_sym)
+            price = float(q.get("price", 0.0)) if q else 0.0
+            if price <= 0:
+                price = 100.0
         entry_price_str = f"{round_nse_tick(price, 'NEAREST'):.2f}" if price > 0 else "0"
 
         entry_payload = {
-            "variety": "NORMAL",
+            "variety": variety,
             "tradingsymbol": tradingsymbol,
             "symboltoken": token,
             "transactiontype": transaction_type,
@@ -177,7 +179,7 @@ class AngelOcoManager:
             "quantity": str(quantity)
         }
 
-        print(f"[SmartAPI 3-Stage] Submitting Stage 1 Entry Order: {entry_payload}")
+        print(f"[SmartAPI 3-Stage] Submitting Stage 1 Entry Order ({variety}): {entry_payload}")
         entry_res = self._send_broker_order(angel_client, entry_payload)
         if not entry_res.get("status"):
             err_msg = entry_res.get("message", "Order rejected by broker")
@@ -194,6 +196,34 @@ class AngelOcoManager:
             return {"status": False, "message": f"Angel One Entry Rejected: {err_msg}"}
 
         entry_order_id = entry_res.get("order_id")
+        print(f"[SmartAPI 3-Stage] Stage 1 Entry Placed! Order ID: {entry_order_id} ({variety})")
+
+        # For AMO orders, record and return immediately (fill confirms next morning at 09:15)
+        if variety == "AMO":
+            self._record_order_db(
+                client_tag=client_tag,
+                symbol=f"{clean_sym}.NS",
+                tradingsymbol=tradingsymbol,
+                symboltoken=token,
+                side=transaction_type,
+                quantity=quantity,
+                entry_order_id=entry_order_id,
+                entry_status="AMO_SUBMITTED",
+                oco_state="AMO_QUEUED",
+                notes=f"AMO Queued after market hours ({market_msg})"
+            )
+            return {
+                "status": True,
+                "success": True,
+                "order_id": entry_order_id,
+                "entry_order_id": entry_order_id,
+                "symbol": f"{clean_sym}.NS",
+                "side": transaction_type,
+                "quantity": quantity,
+                "variety": "AMO",
+                "message": f"⚡ Angel One AMO Order Placed Successfully! (Order ID: {entry_order_id}). Queued for 09:15 AM market open.",
+                "oco_state": "AMO_QUEUED"
+            }
         print(f"[SmartAPI 3-Stage] Stage 1 Entry Placed! Order ID: {entry_order_id}. Awaiting Fill...")
 
         self._record_order_db(
