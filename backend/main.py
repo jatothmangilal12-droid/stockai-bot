@@ -184,6 +184,26 @@ def fetch_live_nse_quote(symbol: str) -> dict:
     return {"price": 0.0, "change_pct": 0.0, "currency": "₹", "source": "None"}
 
 
+LIVE_VIX_CACHE = {"value": 14.2, "timestamp": 0.0}
+
+def fetch_live_india_vix() -> float:
+    """Fetch real-time India VIX (^INDIAVIX) from NSE/Yahoo with 30s cache."""
+    global LIVE_VIX_CACHE
+    now = time.time()
+    if now - LIVE_VIX_CACHE["timestamp"] < 30.0 and LIVE_VIX_CACHE["value"] > 0:
+        return LIVE_VIX_CACHE["value"]
+    try:
+        quote = fetch_live_nse_quote("^INDIAVIX")
+        val = float(quote.get("price", 0.0))
+        if val > 0:
+            LIVE_VIX_CACHE = {"value": round(val, 2), "timestamp": now}
+            return LIVE_VIX_CACHE["value"]
+    except Exception as e:
+        print(f"[VIX] India VIX live fetch error: {e}")
+    return LIVE_VIX_CACHE["value"]
+
+
+
 
 @app.get("/api/stocks")
 def get_stocks():
@@ -240,9 +260,11 @@ def get_stock_analysis(symbol: str):
     macro_trend = technical_engine.fetch_macro_trend(symbol)
     smart_money = technical_engine.detect_smart_money_flow(df)
     mtf_matrix = technical_engine.fetch_multi_timeframe_matrix(symbol)
+    vix_val = fetch_live_india_vix()
     signal = signal_evaluator.evaluate(
         symbol, latest_close, df, patterns, sentiment_data,
-        macro_trend=macro_trend, smart_money_flow=smart_money, mtf_matrix=mtf_matrix
+        macro_trend=macro_trend, smart_money_flow=smart_money, mtf_matrix=mtf_matrix,
+        vix_value=vix_val
     )
 
     # Convert candlestick dataframe to chart JSON records
@@ -326,9 +348,11 @@ def get_market_screener(sector: Optional[str] = None, offset: int = 0):
             delivery = technical_engine.detect_delivery_spike(df)
             reversal = technical_engine.detect_momentum_exhaustion(df)
             macro_trend = technical_engine.fetch_macro_trend(sym)
+            vix_val = fetch_live_india_vix()
             signal = signal_evaluator.evaluate(
                 sym, latest_close, df, patterns, sentiment_data,
-                macro_trend=macro_trend, smart_money_flow=smart_money
+                macro_trend=macro_trend, smart_money_flow=smart_money,
+                vix_value=vix_val
             )
 
             return {
@@ -409,9 +433,11 @@ def discover_best_stocks(force: bool = False):
 
             smart_money = technical_engine.detect_smart_money_flow(df)
             macro_trend = technical_engine.fetch_macro_trend(sym)
+            vix_val = fetch_live_india_vix()
             signal = signal_evaluator.evaluate(
                 sym, latest_close, df, patterns, {"net_sentiment": 0.0},
-                macro_trend=macro_trend, smart_money_flow=smart_money
+                macro_trend=macro_trend, smart_money_flow=smart_money,
+                vix_value=vix_val
             )
 
             vol_ratio = float(df["Vol_Ratio"].iloc[-1]) if "Vol_Ratio" in df else 1.0
@@ -1067,6 +1093,15 @@ def get_broker_batch_quotes(symbols: Optional[str] = ""):
         "count": len(quotes),
         "quotes": json_sanitize(quotes)
     }
+
+
+@app.get("/api/market/vix")
+def get_market_vix():
+    """Return live India VIX value and regime."""
+    vix = fetch_live_india_vix()
+    regime = "HIGH_VOLATILITY" if vix >= 18.0 else ("LOW_VOLATILITY" if vix <= 12.5 else "BALANCED")
+    return {"status": True, "vix": vix, "regime": regime}
+
 
 
 # =============================================================================

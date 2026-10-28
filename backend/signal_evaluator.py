@@ -13,7 +13,7 @@ from backend.option_chain import calculate_option_chain
 class SignalEvaluator:
     """Combines fundamental news sentiment with multi-indicator technical confluence."""
 
-    def evaluate(self, symbol: str, current_price: float, df, patterns: list, sentiment_data: dict, macro_trend: dict = None, smart_money_flow: dict = None, mtf_matrix: dict = None) -> dict:
+    def evaluate(self, symbol: str, current_price: float, df, patterns: list, sentiment_data: dict, macro_trend: dict = None, smart_money_flow: dict = None, mtf_matrix: dict = None, vix_value: float = None) -> dict:
         """
         Evaluate full market confluence with Institutional 7-Point Precision:
         1. Multi-Timeframe Matrix (Daily Macro + 1H Structure)
@@ -214,9 +214,14 @@ class SignalEvaluator:
             reasons.append(f"⚠️ NSE Option Chain: Bearish Call Writing Resistance (PCR: {pcr:.2f}, Max Pain: ₹{max_pain}).")
 
         # =====================================================================
-        # 8. India VIX Adaptive Volatility Engine
+        # 8. India VIX Adaptive Volatility Engine (Live Fetched from NSE)
         # =====================================================================
-        vix_val = float(latest.get("VIX", 14.2)) if "VIX" in df.columns else 14.2
+        if vix_value is not None and float(vix_value) > 0:
+            vix_val = float(vix_value)
+        elif "VIX" in df.columns:
+            vix_val = float(latest.get("VIX", 14.2))
+        else:
+            vix_val = 14.2
         if vix_val >= 18.0:
             vix_regime = "HIGH_VOLATILITY"
             vix_sl_mult = 1.6  # Widen Stop Loss to absorb fake wicks
@@ -465,7 +470,8 @@ class SignalEvaluator:
                 "is_fno": is_fno,
                 "pcr": pcr,
                 "max_pain": max_pain,
-                "vix_regime": vix_regime
+                "vix_regime": vix_regime,
+                "vix_value": round(vix_val, 1)
             },
             "reasons": reasons
         }

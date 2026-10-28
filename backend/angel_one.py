@@ -100,6 +100,7 @@ NSE_TOKENS = {
     "MAZDOCK.NS": "509",
     "MCX.NS": "31181",
     "NATIONALUM.NS": "6364",
+    "NATIONALALUM.NS": "6364",
     "NBCC.NS": "31415",
     "NESTLEIND.NS": "17963",
     "NHPC.NS": "17400",

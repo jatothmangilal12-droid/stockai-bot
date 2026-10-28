@@ -1121,10 +1121,10 @@ table.custom-table tr:hover td {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  animation: fadeIn 0.25s ease-out;
+  animation: modalFadeIn 0.25s ease-out;
 }
 
-@keyframes fadeIn {
+@keyframes modalFadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
 }
