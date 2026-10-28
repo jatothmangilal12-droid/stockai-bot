@@ -181,14 +181,18 @@ class AngelOneClient:
         self.refresh_token: Optional[str] = None
         self.is_authenticated = False
         self._cached_public_ip: Optional[str] = None
+        self._cached_local_ip: Optional[str] = None
 
     def _get_local_ip(self) -> str:
+        if self._cached_local_ip:
+            return self._cached_local_ip
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.settimeout(0.5)
             s.connect(('8.8.8.8', 80))
             ip = s.getsockname()[0]
             s.close()
+            self._cached_local_ip = ip
             return ip
         except Exception:
             return "127.0.0.1"
@@ -209,7 +213,7 @@ class AngelOneClient:
                     return ip
         except Exception:
             pass
-        return "127.0.0.1"
+        return "15.206.37.199"
 
     def _get_headers(self, auth: bool = True) -> dict:
         headers = {
@@ -230,13 +234,13 @@ class AngelOneClient:
         """Check if all required credentials are present."""
         return bool(self.api_key and self.client_code and self.password and self.totp_secret)
 
-    def login(self) -> tuple[bool, str]:
+    def login(self, force: bool = False) -> tuple[bool, str]:
         """Authenticate with Angel One SmartAPI using Client Code, PIN, and TOTP."""
         if not self.is_configured():
             return False, "Missing credentials. Configure API Key, Client Code, PIN, and TOTP in Settings."
 
         with _LOGIN_LOCK:
-            if self.is_authenticated and self.jwt_token:
+            if not force and self.is_authenticated and self.jwt_token:
                 return True, "Already authenticated."
 
             totp_raw = self.totp_secret.replace(" ", "").strip()
@@ -309,7 +313,6 @@ class AngelOneClient:
             "ZOMATO.NS": "5097"
         }
         return aliases.get(clean)
-        return NSE_TOKENS.get(clean) or NSE_TOKENS.get(clean.replace(".NS", ""))
 
     def get_live_quote(self, symbol: str) -> Optional[dict]:
         """Fetch real-time snapshot quote from SmartAPI for given stock."""

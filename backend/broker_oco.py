@@ -21,6 +21,7 @@ Implements Strict Institutional Execution Protocol:
 import math
 import time
 import json
+import uuid
 import urllib.request
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, Tuple, List
@@ -127,14 +128,26 @@ class AngelOcoManager:
         # 1. Market Hours & Variety Check (Live Market vs AMO After-Hours)
         is_live_market, market_msg, variety = get_order_market_context()
 
-        # 2. Authentication Check
+        # 2. Risk Cap & Validation Checks (Institutional Risk Safeguard)
+        if quantity <= 0 or quantity > 500:
+            return {"status": False, "message": f"Order quantity {quantity} invalid. Must be between 1 and 500 shares."}
+
+        # 3. Clean Symbol and Demat Shield Check
+        clean_sym = symbol.replace(".NS", "").replace("-EQ", "").upper()
+
+        calc_price = price
+        if calc_price <= 0:
+            q = angel_client.get_live_quote(clean_sym)
+            calc_price = float(q.get("price", 0.0)) if q else 0.0
+        if calc_price > 0 and (calc_price * quantity) > 100000.0:
+            return {"status": False, "message": f"Order value ₹{calc_price * quantity:,.2f} exceeds max server limit of ₹1,00,000.00."}
+
+        # 4. Authentication Check
         if not angel_client.is_authenticated:
             ok, msg = angel_client.login()
             if not ok:
                 return {"status": False, "message": f"Angel One login required: {msg}"}
 
-        # 3. Clean Symbol and Demat Shield Check
-        clean_sym = symbol.replace(".NS", "").replace("-EQ", "").upper()
         holdings_res = angel_client.get_holdings()
         if holdings_res.get("status"):
             demat_symbols = holdings_res.get("holding_symbols", [])
@@ -151,7 +164,7 @@ class AngelOcoManager:
         tradingsymbol = f"{clean_sym}-EQ"
         transaction_type = "BUY" if side.upper() == "BUY" else "SELL"
         exit_side = "SELL" if transaction_type == "BUY" else "BUY"
-        client_tag = f"SA_{int(time.time())}_{quantity}"
+        client_tag = f"SA_{uuid.uuid4().hex[:10]}"
 
         # =====================================================================
         # STAGE 1: SUBMIT ENTRY ORDER (NORMAL or AMO)
@@ -245,8 +258,8 @@ class AngelOcoManager:
         filled_qty = quantity
         is_complete = False
 
-        # Poll order book up to 6 times (3 seconds total)
-        for attempt in range(6):
+        # Poll order book up to 8 times (4 seconds total)
+        for attempt in range(8):
             time.sleep(0.5)
             ob_res = angel_client.get_order_book()
             if ob_res.get("status"):
@@ -277,12 +290,36 @@ class AngelOcoManager:
                     "oco_state": "ENTRY_PENDING",
                     "demat_protected": True
                 }
-            # For Market order that didn't confirm in 3s, use price fallback
-            fill_price = price if price > 0 else 1000.0
+            # If market order didn't confirm in 4s, query active positions directly for real fill price
+            pos_check = angel_client.get_positions()
+            if pos_check.get("status"):
+                for p in pos_check.get("positions", []):
+                    ts = (p.get("tradingsymbol") or "").replace("-EQ", "").upper()
+                    if ts == clean_sym:
+                        fill_price = float(p.get("buyavgprice", 0.0) if transaction_type == "BUY" else p.get("sellavgprice", 0.0))
+                        filled_qty = abs(int(p.get("netqty", quantity))) or quantity
+                        if fill_price > 0:
+                            is_complete = True
+                            break
 
         if fill_price <= 0:
             quote = angel_client.get_live_quote(clean_sym)
-            fill_price = float(quote.get("price", 1000.0)) if quote else 1000.0
+            if quote and float(quote.get("price", 0.0)) > 0:
+                fill_price = float(quote.get("price", 0.0))
+                is_complete = True
+
+        # CRITICAL SAFEGUARD: Never fallback to arbitrary numbers like ₹1000!
+        if fill_price <= 0:
+            print(f"[SmartAPI CRITICAL] Could not determine fill price for {clean_sym} Order {entry_order_id}. Aborting SL placement to prevent invalid orders.")
+            self._update_order_db(
+                entry_order_id,
+                oco_state="ENTRY_FAILED_ABORT",
+                notes="Could not determine execution fill price from broker order book or positions."
+            )
+            return {
+                "status": False,
+                "message": f"CRITICAL: Order {entry_order_id} fill price could not be verified by broker API. Check Angel One app immediately!"
+            }
 
         print(f"[SmartAPI 3-Stage] Stage 2 Confirmed Fill @ ₹{fill_price:.2f} (Filled Qty: {filled_qty})")
 
@@ -497,21 +534,32 @@ class AngelOcoManager:
                     st = (t_match.get("orderstatus") or t_match.get("status") or "").lower()
                     if st in ("complete", "executed"):
                         print(f"[SmartAPI OCO] 🎯 TARGET HIT for {rec['symbol']} @ ₹{rec['target_price']}! Cancelling companion Stop-Loss order {sl_id}...")
+                        sl_cancelled = False
                         if sl_id:
-                            angel_client.cancel_order(sl_id, variety="STOPLOSS")
+                            for retry in range(3):
+                                c_res = angel_client.cancel_order(sl_id, variety="STOPLOSS")
+                                if c_res.get("status"):
+                                    sl_cancelled = True
+                                    break
+                                time.sleep(0.3)
+
+                        sl_status_text = "CANCELLED" if sl_cancelled else "CANCEL_PENDING"
+                        oco_state_text = "TARGET_HIT" if sl_cancelled else "TARGET_HIT_SL_CANCEL_RETRY"
+                        note_text = f"Target achieved at ₹{rec['target_price']}" + ("" if sl_cancelled else " (Warning: SL cancellation unverified)")
+
                         self._update_order_db(
                             entry_id,
                             target_status="COMPLETE",
-                            sl_status="CANCELLED",
-                            oco_state="TARGET_HIT",
-                            notes=f"Target achieved at ₹{rec['target_price']}"
+                            sl_status=sl_status_text,
+                            oco_state=oco_state_text,
+                            notes=note_text
                         )
                         events.append({
                             "type": "BROKER_OCO_UPDATE",
                             "event": "TARGET_HIT",
                             "symbol": rec["symbol"],
                             "price": rec["target_price"],
-                            "message": f"🎯 Target Hit for {rec['symbol']} at ₹{rec['target_price']}! Companion Stop-Loss order cancelled."
+                            "message": f"🎯 Target Hit for {rec['symbol']} at ₹{rec['target_price']}! Companion Stop-Loss order {sl_status_text.lower()}."
                         })
                         continue
 
@@ -522,21 +570,32 @@ class AngelOcoManager:
                     st = (sl_match.get("orderstatus") or sl_match.get("status") or "").lower()
                     if st in ("complete", "executed"):
                         print(f"[SmartAPI OCO] 🛑 STOP-LOSS HIT for {rec['symbol']} @ ₹{rec['sl_trigger']}! Cancelling companion Target order {target_id}...")
+                        tgt_cancelled = False
                         if target_id:
-                            angel_client.cancel_order(target_id, variety="NORMAL")
+                            for retry in range(3):
+                                c_res = angel_client.cancel_order(target_id, variety="NORMAL")
+                                if c_res.get("status"):
+                                    tgt_cancelled = True
+                                    break
+                                time.sleep(0.3)
+
+                        tgt_status_text = "CANCELLED" if tgt_cancelled else "CANCEL_PENDING"
+                        oco_state_text = "SL_HIT" if tgt_cancelled else "SL_HIT_TARGET_CANCEL_RETRY"
+                        note_text = f"Stop loss triggered at ₹{rec['sl_trigger']}" + ("" if tgt_cancelled else " (Warning: Target cancellation unverified)")
+
                         self._update_order_db(
                             entry_id,
                             sl_status="COMPLETE",
-                            target_status="CANCELLED",
-                            oco_state="SL_HIT",
-                            notes=f"Stop loss triggered at ₹{rec['sl_trigger']}"
+                            target_status=tgt_status_text,
+                            oco_state=oco_state_text,
+                            notes=note_text
                         )
                         events.append({
                             "type": "BROKER_OCO_UPDATE",
                             "event": "SL_HIT",
                             "symbol": rec["symbol"],
                             "price": rec["sl_trigger"],
-                            "message": f"🛑 Stop-Loss Hit for {rec['symbol']} at ₹{rec['sl_trigger']}! Companion Target order cancelled."
+                            "message": f"🛑 Stop-Loss Hit for {rec['symbol']} at ₹{rec['sl_trigger']}! Companion Target order {tgt_status_text.lower()}."
                         })
                         continue
 
@@ -544,17 +603,26 @@ class AngelOcoManager:
 
     def cancel_oco_for_symbol(self, angel_client, symbol: str) -> bool:
         """
-        Cancel active OCO orders for a symbol when user manually squares off.
+        Cancel active OCO orders for a symbol using EXACT matching when position is flattened.
         """
-        clean_sym = symbol.replace(".NS", "").replace("-EQ", "").upper()
+        clean_sym = symbol.replace(".NS", "").replace("-EQ", "").strip().upper()
         active_records = self._get_active_oco_records()
         for rec in active_records:
-            if clean_sym in rec["symbol"].upper():
+            rec_sym = (rec.get("symbol") or "").replace(".NS", "").replace("-EQ", "").strip().upper()
+            if clean_sym == rec_sym:
                 if rec.get("sl_order_id"):
-                    angel_client.cancel_order(rec["sl_order_id"], variety="STOPLOSS")
+                    for _ in range(3):
+                        res = angel_client.cancel_order(rec["sl_order_id"], variety="STOPLOSS")
+                        if res.get("status"):
+                            break
+                        time.sleep(0.2)
                 if rec.get("target_order_id"):
-                    angel_client.cancel_order(rec["target_order_id"], variety="NORMAL")
-                self._update_order_db(rec["entry_order_id"], oco_state="MANUAL_EXIT", notes="Manual square-off executed by user")
+                    for _ in range(3):
+                        res = angel_client.cancel_order(rec["target_order_id"], variety="NORMAL")
+                        if res.get("status"):
+                            break
+                        time.sleep(0.2)
+                self._update_order_db(rec["entry_order_id"], sl_status="CANCELLED", target_status="CANCELLED", oco_state="MANUAL_EXIT", notes="Manual square-off executed by user")
         return True
 
     def _send_broker_order(self, angel_client, payload: dict) -> dict:

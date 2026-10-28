@@ -23,7 +23,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import yfinance as yf
 import numpy as np
 
@@ -54,7 +54,7 @@ app = FastAPI(title="StockAI - Indian Market 15m Pattern & Sentiment Bot", versi
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -87,8 +87,8 @@ active_connections: list[WebSocket] = []
 class OrderRequest(BaseModel):
     symbol: str
     side: str  # 'BUY' or 'SELL'
-    quantity: int
-    price: float
+    quantity: int = Field(default=1, gt=0, le=500)
+    price: float = Field(default=0.0, ge=0.0)
     stop_loss: Optional[float] = None
     target_price: Optional[float] = None
     sl_pct: Optional[float] = None
@@ -313,9 +313,13 @@ def get_stock_analysis(symbol: str):
         "mtf_matrix": mtf_matrix,
         "price_impact": sentiment_data.get("price_impact"),
         "option_chain": signal.get("option_chain"),
-        "breakdown": signal.get("breakdown")
+        "breakdown": signal.get("breakdown"),
+        "timestamp": time.time(),
+        "cached_at": time.time()
     }
     clean_result = json_sanitize(result)
+    clean_result["timestamp"] = result["timestamp"]
+    clean_result["cached_at"] = result["cached_at"]
     CACHE_ANALYSIS[symbol] = clean_result
     return clean_result
 
@@ -1041,12 +1045,16 @@ def get_broker_positions():
 
 @app.post("/api/broker/square-off-all")
 def square_off_all_broker_positions():
-    """Square off all open INTRADAY positions on Angel One and cancel active OCO orders."""
+    """Square off all open INTRADAY positions on Angel One FIRST, then cancel companion OCO orders."""
+    # 1. Flatten broker positions FIRST to avoid naked exposure
+    res = angel_client.square_off_all()
+
+    # 2. Only after square-off order is submitted, cancel the active companion OCO SL/Target orders
     from backend.broker_oco import angel_oco_manager
     active = angel_oco_manager._get_active_oco_records()
     for rec in active:
         angel_oco_manager.cancel_oco_for_symbol(angel_client, rec["symbol"])
-    return angel_client.square_off_all()
+    return res
 
 
 @app.get("/api/broker/tokens")
@@ -1086,27 +1094,33 @@ def get_broker_oco_orders():
 
 @app.post("/api/broker/close/{symbol}")
 def close_broker_symbol(symbol: str):
-    """Square off specific symbol on Angel One and cancel its active OCO orders."""
+    """Square off specific symbol on Angel One FIRST, then cancel its companion OCO orders."""
     from backend.broker_oco import angel_oco_manager
-    angel_oco_manager.cancel_oco_for_symbol(angel_client, symbol)
     pos_res = angel_client.get_positions()
+    clean = symbol.replace(".NS", "").replace("-EQ", "").strip().upper()
+
     if pos_res.get("status"):
         positions = pos_res.get("positions", [])
-        clean = symbol.replace(".NS", "").replace("-EQ", "").upper()
         for p in positions:
-            tsym = (p.get("tradingsymbol") or "").replace("-EQ", "").upper()
+            tsym = (p.get("tradingsymbol") or "").replace("-EQ", "").strip().upper()
             if tsym == clean:
                 net_qty = int(p.get("netqty", 0))
                 if net_qty != 0:
                     exit_side = "SELL" if net_qty > 0 else "BUY"
-                    return angel_client.place_order(
+                    order_res = angel_client.place_order(
                         symbol=f"{clean}.NS",
                         side=exit_side,
                         quantity=abs(net_qty),
                         price=0.0,
                         order_type="MARKET"
                     )
-    return {"status": True, "message": f"Active OCO orders cancelled for {symbol}"}
+                    # After exit order is placed, cancel companion OCO SL and Target orders
+                    angel_oco_manager.cancel_oco_for_symbol(angel_client, symbol)
+                    return order_res
+
+    # If no open broker position was found, cancel any leftover pending OCO orders
+    angel_oco_manager.cancel_oco_for_symbol(angel_client, symbol)
+    return {"status": True, "message": f"Active OCO orders cancelled for {clean} (no open broker position)."}
 
 
 

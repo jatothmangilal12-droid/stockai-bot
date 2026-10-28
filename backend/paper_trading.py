@@ -229,8 +229,9 @@ class PaperTradingEngine:
 
         conn = get_connection()
         cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
 
-        cursor.execute("SELECT cash_balance FROM portfolio ORDER BY id DESC LIMIT 1")
+        cursor.execute("SELECT cash_balance FROM portfolio WHERE id = 1")
         row = cursor.fetchone()
         cash = row["cash_balance"] if row else DEFAULT_PAPER_BALANCE
 
@@ -243,16 +244,17 @@ class PaperTradingEngine:
             existing_short = cursor.fetchone()
             if existing_short:
                 pos_id = existing_short["id"]
+                conn.commit()
                 conn.close()
                 return self.close_position(pos_id, price, reason="SHORT_COVER")
 
             # 2. Otherwise open fresh Long position
             if cash < margin_required:
+                conn.rollback()
                 conn.close()
                 return {"success": False, "message": f"Insufficient margin (Need 5x margin ₹{margin_required:,.2f}, available cash ₹{cash:,.2f})"}
 
-            new_cash = cash - margin_required
-            cursor.execute("UPDATE portfolio SET cash_balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1", (new_cash,))
+            cursor.execute("UPDATE portfolio SET cash_balance = cash_balance - ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1", (margin_required,))
 
             cursor.execute("""
             INSERT INTO positions (symbol, company_name, side, quantity, entry_price, current_price,
@@ -278,16 +280,17 @@ class PaperTradingEngine:
 
             if existing_long:
                 pos_id = existing_long["id"]
+                conn.commit()
                 conn.close()
                 return self.close_position(pos_id, price, reason="MANUAL_EXIT")
             else:
                 # 2. Otherwise open Short position
                 if cash < margin_required:
+                    conn.rollback()
                     conn.close()
                     return {"success": False, "message": f"Insufficient margin to short. Need 5x margin ₹{margin_required:,.2f}, available cash ₹{cash:,.2f}"}
 
-                new_cash = cash - margin_required
-                cursor.execute("UPDATE portfolio SET cash_balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1", (new_cash,))
+                cursor.execute("UPDATE portfolio SET cash_balance = cash_balance - ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1", (margin_required,))
 
                 cursor.execute("""
                 INSERT INTO positions (symbol, company_name, side, quantity, entry_price, current_price,
@@ -307,13 +310,15 @@ class PaperTradingEngine:
                 return {"success": True, "message": f"Short sold {quantity} shares of {symbol} at ₹{price:.2f}", "position_id": pos_id}
 
     def close_position(self, position_id: int, current_price: float, reason: str = "MANUAL") -> dict:
-        """Close an open position, realize P&L, incorporate prior partial profit, and credit back funds."""
+        """Close an open position, realize P&L, incorporate prior partial profit, and credit back funds atomically."""
         conn = get_connection()
         cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
 
         cursor.execute("SELECT * FROM positions WHERE id = ? AND status = 'OPEN'", (position_id,))
         pos = cursor.fetchone()
         if not pos:
+            conn.rollback()
             conn.close()
             return {"success": False, "message": "Position not found or already closed."}
 
@@ -353,7 +358,7 @@ class PaperTradingEngine:
             post_mortem = "Confluence Target Hit"
             lesson_learned = "15m multi-timeframe structure validated."
 
-        # Update position
+        # Atomic check-and-update position to prevent double-close in concurrent threads
         cursor.execute("""
         UPDATE positions
         SET status = 'CLOSED',
@@ -364,15 +369,16 @@ class PaperTradingEngine:
             trade_result = ?,
             post_mortem = ?,
             lesson_learned = ?
-        WHERE id = ?
+        WHERE id = ? AND status = 'OPEN'
         """, (current_price, total_realized_pnl, reason, trade_result, post_mortem, lesson_learned, position_id))
 
-        # Update portfolio cash
-        cursor.execute("SELECT cash_balance FROM portfolio ORDER BY id DESC LIMIT 1")
-        cash_row = cursor.fetchone()
-        curr_cash = cash_row["cash_balance"] if cash_row else DEFAULT_PAPER_BALANCE
-        new_cash = curr_cash + returned_cash
-        cursor.execute("UPDATE portfolio SET cash_balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1", (new_cash,))
+        if cursor.rowcount == 0:
+            conn.rollback()
+            conn.close()
+            return {"success": False, "message": "Position was already closed by concurrent process."}
+
+        # Update portfolio cash balance atomically (Lost Update Prevention)
+        cursor.execute("UPDATE portfolio SET cash_balance = cash_balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1", (returned_cash,))
 
         # Log trade exit
         cursor.execute("""
@@ -482,16 +488,14 @@ class PaperTradingEngine:
 
                             conn_up = get_connection()
                             c_up = conn_up.cursor()
+                            c_up.execute("BEGIN IMMEDIATE")
                             c_up.execute("""
                                 UPDATE positions 
                                 SET quantity = ?, stop_loss = ?, target_price = ?, notes = 'PARTIAL_BOOKED_FREE_RIDE', realized_pnl = COALESCE(realized_pnl, 0.0) + ?
                                 WHERE id = ?
                             """, (remaining_qty, new_sl, new_tp2, round(partial_pnl, 2), pos_id))
 
-                            c_up.execute("SELECT cash_balance FROM portfolio ORDER BY id DESC LIMIT 1")
-                            row_c = c_up.fetchone()
-                            cur_cash = row_c["cash_balance"] if row_c else DEFAULT_PAPER_BALANCE
-                            c_up.execute("UPDATE portfolio SET cash_balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1", (cur_cash + returned_cash,))
+                            c_up.execute("UPDATE portfolio SET cash_balance = cash_balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1", (returned_cash,))
 
                             c_up.execute("""
                                 INSERT INTO trade_logs (symbol, action, quantity, price, pnl, trade_type, trade_result, notes)
@@ -536,16 +540,14 @@ class PaperTradingEngine:
 
                             conn_up = get_connection()
                             c_up = conn_up.cursor()
+                            c_up.execute("BEGIN IMMEDIATE")
                             c_up.execute("""
                                 UPDATE positions 
                                 SET quantity = ?, stop_loss = ?, target_price = ?, notes = 'PARTIAL_BOOKED_FREE_RIDE', realized_pnl = COALESCE(realized_pnl, 0.0) + ?
                                 WHERE id = ?
                             """, (remaining_qty, new_sl, new_tp2, round(partial_pnl, 2), pos_id))
 
-                            c_up.execute("SELECT cash_balance FROM portfolio ORDER BY id DESC LIMIT 1")
-                            row_c = c_up.fetchone()
-                            cur_cash = row_c["cash_balance"] if row_c else DEFAULT_PAPER_BALANCE
-                            c_up.execute("UPDATE portfolio SET cash_balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1", (cur_cash + returned_cash,))
+                            c_up.execute("UPDATE portfolio SET cash_balance = cash_balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1", (returned_cash,))
 
                             c_up.execute("""
                                 INSERT INTO trade_logs (symbol, action, quantity, price, pnl, trade_type, trade_result, notes)

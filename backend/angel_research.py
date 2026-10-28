@@ -41,78 +41,11 @@ class AngelResearchEngine:
             conn.close()
             return
 
-        cursor.execute("SELECT COUNT(*) FROM angel_research_calls")
-        count = cursor.fetchone()[0]
-
-        if count == 0:
-            initial_calls = [
-                {
-                    "call_id": "CALL_ETERNAL_001",
-                    "symbol": "ETERNAL",
-                    "company_name": "Zomato / Eternal Ltd",
-                    "call_type": "Analyst call",
-                    "category": "Intraday",
-                    "action": "BUY",
-                    "entry_price": 326.30,
-                    "stop_loss": 323.00,
-                    "target_price": 331.50,
-                    "current_price": 326.85,
-                    "potential_pct": 1.42,
-                    "achieved_pct": 0.17,
-                    "status": "ACTIVE"
-                },
-                {
-                    "call_id": "CALL_PRESTIGE_002",
-                    "symbol": "PRESTIGE",
-                    "company_name": "Prestige Estates Projects Ltd",
-                    "call_type": "Analyst call",
-                    "category": "Intraday",
-                    "action": "BUY",
-                    "entry_price": 1395.00,
-                    "stop_loss": 1380.00,
-                    "target_price": 1410.00,
-                    "current_price": 1398.90,
-                    "potential_pct": 0.79,
-                    "achieved_pct": 0.42,
-                    "status": "TARGET_ACHIEVED"
-                },
-                {
-                    "call_id": "CALL_KAYNES_003",
-                    "symbol": "KAYNES",
-                    "company_name": "Kaynes Technology India Ltd",
-                    "call_type": "Analyst call",
-                    "category": "Intraday",
-                    "action": "BUY",
-                    "entry_price": 3125.00,
-                    "stop_loss": 3080.00,
-                    "target_price": 3165.00,
-                    "current_price": 3160.50,
-                    "potential_pct": 0.14,
-                    "achieved_pct": 1.19,
-                    "status": "TARGET_ACHIEVED"
-                }
-            ]
-
-            for c in initial_calls:
-                cursor.execute("""
-                    INSERT INTO angel_research_calls (
-                        call_id, symbol, company_name, call_type, category, action,
-                        entry_price, stop_loss, target_price, current_price,
-                        potential_pct, achieved_pct, status, auto_traded, allocated_amount, quantity
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 10000.0, 0)
-                """, (
-                    c["call_id"], c["symbol"], c["company_name"], c["call_type"], c["category"],
-                    c["action"], c["entry_price"], c["stop_loss"], c["target_price"],
-                    c["current_price"], c["potential_pct"], c["achieved_pct"], c["status"]
-                ))
-            
-            cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('angel_seeded', '1')")
-            conn.commit()
-
+        # Clean out any old mock seed calls and maintain clean database
+        cursor.execute("DELETE FROM angel_research_calls WHERE call_id IN ('CALL_ETERNAL_001', 'CALL_PRESTIGE_002', 'CALL_KAYNES_003')")
+        cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('angel_seeded', '1')")
+        conn.commit()
         conn.close()
-
-        # Auto-execute paper trade for active seeded call if not already traded
-        self.auto_trade_active_calls()
 
     def get_all_calls(self, category: Optional[str] = None) -> List[Dict[str, Any]]:
         """Retrieve Angel One research calls with live stats & paper trade status."""
@@ -330,9 +263,20 @@ class AngelResearchEngine:
             if re.search(r'\b(sell|short)\b', text, re.IGNORECASE):
                 action = "SELL"
 
-            # Symbol pattern
-            sym_match = re.search(r'\b([A-Z]{3,15})\b', text)
-            symbol = sym_match.group(1).upper() if sym_match else ""
+            # Filter out common trading vocabulary from symbol candidate words
+            EXCLUDE_KEYWORDS = {
+                "BUY", "SELL", "CALL", "PUT", "TARGET", "STOPLOSS", "STOP", "LOSS", "SL",
+                "TP", "TGT", "ANALYST", "INTRADAY", "PRICE", "EXIT", "SHORT", "LONG",
+                "EQUITY", "FUTURES", "OPTIONS", "NSE", "BSE", "NIFTY", "BANKNIFTY",
+                "RECOMMENDATION", "RECOMMENDS", "ALERT", "STOCK", "SHARE", "CMP", "AT"
+            }
+
+            symbol = ""
+            for match in re.finditer(r'\b([A-Z]{3,15})\b', text.upper()):
+                word = match.group(1)
+                if word not in EXCLUDE_KEYWORDS:
+                    symbol = word
+                    break
 
             # Entry price pattern
             entry_match = re.search(r'(?:entry|at|buy\s+at|price)\s*[:₹\s]*([0-9]+(?:\.[0-9]+)?)', text, re.IGNORECASE)
