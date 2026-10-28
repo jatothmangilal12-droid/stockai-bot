@@ -617,6 +617,27 @@ def toggle_angel_auto_trade(enabled: bool = True):
     return {"success": True, "auto_trade_enabled": enabled}
 
 
+@app.delete("/api/angel-research/call/{call_id}")
+def delete_angel_research_call(call_id: str):
+    """Delete a single Angel One recommendation and close associated position if open."""
+    res = angel_research.delete_call(call_id)
+    return json_sanitize(res)
+
+
+@app.post("/api/angel-research/clear-all")
+def clear_all_angel_research_calls():
+    """Clear all Angel One research recommendations from database for a fresh clean slate."""
+    res = angel_research.clear_all_calls()
+    return json_sanitize(res)
+
+
+@app.post("/api/angel-research/clear-expired")
+def clear_expired_angel_research_calls():
+    """Clear expired/completed Angel One research recommendations."""
+    res = angel_research.clear_expired_calls()
+    return json_sanitize(res)
+
+
 # =============================================================================
 # Paper Trading & Autonomous AI Auto-Trader Endpoints
 # =============================================================================

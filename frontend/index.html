@@ -385,8 +385,18 @@
         <span style="font-size:0.72rem; background:#00f59b; color:#022c22; font-weight:800; padding:2px 8px; border-radius:6px;">₹10,000 / TRADE</span>
       </div>
 
-      <div style="font-size:0.9rem; font-weight:800; color:#cbd5e1; margin-bottom:12px; display:flex; align-items:center; gap:6px;">
-        <span>Today's Calls</span>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+        <div style="font-size:0.95rem; font-weight:800; color:#cbd5e1; display:flex; align-items:center; gap:6px;">
+          <span>🎯 Today's Calls</span>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-primary btn-sm" onclick="openAddCallModal()" style="font-size:0.75rem; border-radius:8px; display:flex; align-items:center; gap:5px; font-weight:800; background:var(--grad-primary); color:#022c22; border:none; box-shadow:0 2px 10px rgba(0, 229, 255, 0.3); padding:5px 12px; cursor:pointer;">
+            <span>➕</span> <span>Add Stock</span>
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="clearAllCallsPrompt()" style="font-size:0.72rem; border-radius:8px; color:#ff3366; border-color:rgba(255, 51, 102, 0.4); display:flex; align-items:center; gap:4px; padding:5px 10px; cursor:pointer;">
+            <span>🗑️</span> <span>Clear Old</span>
+          </button>
+        </div>
       </div>
 
       <!-- Active Calls List -->
@@ -557,6 +567,82 @@
     </section>
 
   </main>
+
+  <!-- Modal: Add Angel One Recommendation -->
+  <div id="add-call-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(2, 6, 23, 0.85); backdrop-filter:blur(6px); z-index:9999; align-items:center; justify-content:center; padding:16px;">
+    <div style="background:linear-gradient(145deg, #131b2e 0%, #0a0f1d 100%); border:1px solid rgba(0, 229, 255, 0.3); border-radius:18px; max-width:460px; width:100%; padding:20px; box-shadow:0 20px 50px rgba(0,0,0,0.6); position:relative; max-height:90vh; overflow-y:auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid rgba(255, 255, 255, 0.08); padding-bottom:10px;">
+        <div style="font-weight:800; font-size:1.05rem; color:#ffffff; display:flex; align-items:center; gap:8px;">
+          <span>➕</span> <span>Add Angel One Stock</span>
+        </div>
+        <button onclick="closeAddCallModal()" style="background:none; border:none; color:var(--text-muted); font-size:1.4rem; cursor:pointer; line-height:1;">&times;</button>
+      </div>
+
+      <!-- Mode Selector: Direct Form or Paste Text -->
+      <div style="display:flex; gap:8px; margin-bottom:14px; background:rgba(15, 23, 42, 0.6); padding:4px; border-radius:10px;">
+        <button id="modal-tab-form-btn" onclick="switchModalMode('form')" class="btn btn-primary btn-sm" style="flex:1; border-radius:8px; font-size:0.75rem; font-weight:700;">✍️ Stock Form</button>
+        <button id="modal-tab-paste-btn" onclick="switchModalMode('paste')" class="btn btn-outline btn-sm" style="flex:1; border-radius:8px; font-size:0.75rem; font-weight:700;">📋 Paste Alert Text</button>
+      </div>
+
+      <!-- Form Mode -->
+      <div id="modal-mode-form">
+        <div style="margin-bottom:12px;">
+          <label style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">STOCK SYMBOL (NSE):</label>
+          <input type="text" id="manual-sym-input" class="form-input" style="width:100%; margin-top:4px;" placeholder="e.g. TATAMOTORS, SBIN, RELIANCE">
+        </div>
+
+        <div style="display:flex; gap:10px; margin-bottom:12px;">
+          <div style="flex:1;">
+            <label style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">CATEGORY:</label>
+            <select id="manual-cat-input" class="form-input" style="width:100%; margin-top:4px;">
+              <option value="Intraday">Intraday</option>
+              <option value="Short Term">Short Term</option>
+              <option value="Long Term">Long Term</option>
+            </select>
+          </div>
+          <div style="flex:1;">
+            <label style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">ACTION:</label>
+            <select id="manual-action-input" class="form-input" style="width:100%; margin-top:4px;">
+              <option value="BUY">BUY</option>
+              <option value="SELL">SELL</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display:flex; gap:10px; margin-bottom:12px;">
+          <div style="flex:1;">
+            <label style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">ENTRY PRICE (₹):</label>
+            <input type="number" step="0.05" id="manual-entry-input" class="form-input" style="width:100%; margin-top:4px;" placeholder="e.g. 980.00">
+          </div>
+          <div style="flex:1;">
+            <label style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">STOP LOSS (₹):</label>
+            <input type="number" step="0.05" id="manual-sl-input" class="form-input" style="width:100%; margin-top:4px;" placeholder="e.g. 970.00">
+          </div>
+        </div>
+
+        <div style="margin-bottom:16px;">
+          <label style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">TARGET PRICE (₹):</label>
+          <input type="number" step="0.05" id="manual-tgt-input" class="form-input" style="width:100%; margin-top:4px;" placeholder="e.g. 1005.00">
+        </div>
+
+        <button class="btn btn-primary" onclick="submitManualCall()" id="btn-submit-manual-call" style="width:100%; padding:12px; font-weight:800; font-size:0.85rem; background:var(--grad-primary); color:#022c22; border:none; border-radius:10px; cursor:pointer;">
+          🚀 Add & Auto Paper Trade (₹10,000)
+        </button>
+      </div>
+
+      <!-- Paste Alert Mode -->
+      <div id="modal-mode-paste" style="display:none;">
+        <p style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:10px;">
+          Angel One యాప్‌లోని మెసేజ్ లేదా నోటిఫికేషన్‌ను డైరెక్ట్‌గా ఇక్కడ పేస్ట్ చేయండి:
+        </p>
+        <textarea id="modal-paste-input" rows="4" class="form-input" style="width:100%; border-radius:10px; font-size:0.8rem; padding:10px; margin-bottom:12px;" placeholder="ఉదా: Analyst call: Buy TATAMOTORS at 980, SL 970, Target 1005"></textarea>
+
+        <button class="btn btn-primary" onclick="submitPastedCallFromModal()" style="width:100%; padding:12px; font-weight:800; font-size:0.85rem; background:var(--grad-primary); color:#022c22; border:none; border-radius:10px; cursor:pointer;">
+          ⚡ Auto Parse & Trade (₹10,000)
+        </button>
+      </div>
+    </div>
+  </div>
 
   <!-- Notification Toast -->
   <div id="toast-container" style="position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:99999; display:none; background:rgba(15, 23, 42, 0.95); border:1px solid #00f59b; color:#ffffff; padding:10px 20px; border-radius:30px; font-size:0.82rem; font-weight:700; box-shadow:0 8px 30px rgba(0, 0, 0, 0.6);">

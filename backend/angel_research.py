@@ -30,9 +30,17 @@ class AngelResearchEngine:
         self._seed_default_calls()
 
     def _seed_default_calls(self):
-        """Seed initial real Angel One calls from user screenshot if table is empty."""
+        """Seed initial Angel One calls only once. Never re-seed if user has cleared them."""
         conn = get_connection()
         cursor = conn.cursor()
+        
+        # Check if seeding was already performed previously
+        cursor.execute("SELECT value FROM settings WHERE key = 'angel_seeded'")
+        seed_flag = cursor.fetchone()
+        if seed_flag and seed_flag[0] == '1':
+            conn.close()
+            return
+
         cursor.execute("SELECT COUNT(*) FROM angel_research_calls")
         count = cursor.fetchone()[0]
 
@@ -97,11 +105,13 @@ class AngelResearchEngine:
                     c["action"], c["entry_price"], c["stop_loss"], c["target_price"],
                     c["current_price"], c["potential_pct"], c["achieved_pct"], c["status"]
                 ))
+            
+            cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('angel_seeded', '1')")
             conn.commit()
 
         conn.close()
 
-        # Auto-execute paper trade for active seeded call (ETERNAL) if not already traded
+        # Auto-execute paper trade for active seeded call if not already traded
         self.auto_trade_active_calls()
 
     def get_all_calls(self, category: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -122,6 +132,66 @@ class AngelResearchEngine:
         calls = [dict(r) for r in rows]
         conn.close()
         return calls
+
+    def delete_call(self, call_identifier: Any) -> Dict[str, Any]:
+        """Delete an individual Angel One call by ID or call_id, closing any open position."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # Check by integer ID or string call_id
+        cursor.execute("SELECT * FROM angel_research_calls WHERE id = ? OR call_id = ?", (str(call_identifier), str(call_identifier)))
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return {"success": False, "message": f"Call {call_identifier} not found"}
+
+        call = dict(row)
+        pos_id = call.get("position_id")
+        if pos_id:
+            try:
+                ltp = float(call.get("current_price") or call.get("entry_price") or 0.0)
+                self.paper_trading.close_position(pos_id, ltp, reason="USER_DISMISSED")
+            except Exception as e:
+                print(f"[AngelResearch] Error closing position on call delete: {e}")
+
+        cursor.execute("DELETE FROM angel_research_calls WHERE id = ?", (call["id"],))
+        conn.commit()
+        conn.close()
+        return {"success": True, "message": f"Successfully deleted {call.get('symbol')}", "deleted_id": call["id"]}
+
+    def clear_all_calls(self) -> Dict[str, Any]:
+        """Clear all calls and close associated paper trades, leaving a fresh clean slate."""
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Find open positions linked to angel calls to close them gracefully
+        cursor.execute("SELECT position_id, current_price, entry_price FROM angel_research_calls WHERE position_id IS NOT NULL")
+        rows = cursor.fetchall()
+        for r in rows:
+            pos_id = r["position_id"]
+            if pos_id:
+                try:
+                    ltp = float(r["current_price"] or r["entry_price"] or 0.0)
+                    self.paper_trading.close_position(pos_id, ltp, reason="CALLS_CLEARED")
+                except Exception:
+                    pass
+
+        cursor.execute("DELETE FROM angel_research_calls")
+        deleted_count = cursor.rowcount
+        cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('angel_seeded', '1')")
+        conn.commit()
+        conn.close()
+        return {"success": True, "message": f"Cleared {deleted_count} calls", "deleted_count": deleted_count}
+
+    def clear_expired_calls(self) -> Dict[str, Any]:
+        """Clear completed/expired calls (TARGET_ACHIEVED, SL_HIT) only."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM angel_research_calls WHERE status != 'ACTIVE'")
+        deleted_count = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return {"success": True, "message": f"Cleared {deleted_count} expired calls", "deleted_count": deleted_count}
 
     def ingest_call(
         self,

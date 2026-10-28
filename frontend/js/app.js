@@ -225,12 +225,17 @@ function renderCalls(calls, port) {
   if (activeCalls.length === 0) {
     activeContainer.innerHTML = `
       <div style="text-align:center; padding:35px 20px; background:rgba(15, 23, 42, 0.5); border:1px dashed rgba(255, 255, 255, 0.1); border-radius:14px;">
-        <span style="font-size:2rem;">📡</span>
-        <div style="font-weight:700; color:#ffffff; margin-top:8px;">Listening for Angel One ${currentCategory} Calls...</div>
-        <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">Angel One రీసెర్చ్ కాల్ ఇవ్వగానే AI వెంటనే క్యాచ్ చేసి ₹10,000 ఆటో-ట్రేడ్ చేస్తుంది!</div>
-        <button class="btn btn-primary btn-sm" onclick="triggerTestCall()" style="margin-top:14px; border-radius:8px;">
-          🚀 Test Sample Call Now
-        </button>
+        <span style="font-size:2rem;">👼</span>
+        <div style="font-weight:700; color:#ffffff; margin-top:8px;">No Active ${currentCategory} Calls</div>
+        <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">Angel One యాప్‌లో మీకు కనిపించిన స్టాక్ వివరాలను ఇక్కడ యాడ్ చేయండి. AI వెంటనే ₹10,000 ఆటో-ట్రేడ్ చేస్తుంది!</div>
+        <div style="display:flex; justify-content:center; gap:10px; margin-top:14px; flex-wrap:wrap;">
+          <button class="btn btn-primary btn-sm" onclick="openAddCallModal()" style="border-radius:8px; font-weight:800; background:var(--grad-primary); color:#022c22; border:none; padding:8px 16px; cursor:pointer;">
+            ➕ Add Angel One Stock
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="triggerTestCall()" style="border-radius:8px; cursor:pointer;">
+            ⚡ Test Sample Call
+          </button>
+        </div>
       </div>
     `;
   } else {
@@ -276,9 +281,14 @@ function generateCallCardHtml(c, isPast = false) {
 
   return `
     <div class="call-card">
-      <div class="analyst-badge">
-        <span>🟢 ${c.call_type || 'Analyst call'}</span>
-        <span style="color:var(--text-muted); font-weight:500;">• Updated live</span>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <div class="analyst-badge" style="margin-bottom:0;">
+          <span>🟢 ${c.call_type || 'Analyst call'}</span>
+          <span style="color:var(--text-muted); font-weight:500;">• Updated live</span>
+        </div>
+        <button onclick="deleteSingleCall(${c.id || `'${c.call_id}'`}, '${sym}', event)" title="Dismiss Stock" style="background:rgba(255, 51, 102, 0.12); border:1px solid rgba(255, 51, 102, 0.35); color:#ff3366; border-radius:6px; padding:2px 8px; font-size:0.7rem; cursor:pointer; font-weight:700;">
+          🗑️ Dismiss
+        </button>
       </div>
 
       <div class="call-card-top">
@@ -688,6 +698,164 @@ function saveServerUrl() {
     localStorage.setItem('stockai_server_url', url);
     showToast('Backend Server URL saved!');
     setTimeout(() => location.reload(), 800);
+  }
+}
+
+// =============================================================================
+// Manual & Ingest Angel One Call Management
+// =============================================================================
+
+function openAddCallModal() {
+  const m = document.getElementById('add-call-modal');
+  if (m) m.style.display = 'flex';
+}
+
+function closeAddCallModal() {
+  const m = document.getElementById('add-call-modal');
+  if (m) m.style.display = 'none';
+}
+
+function switchModalMode(mode) {
+  const formDiv = document.getElementById('modal-mode-form');
+  const pasteDiv = document.getElementById('modal-mode-paste');
+  const formBtn = document.getElementById('modal-tab-form-btn');
+  const pasteBtn = document.getElementById('modal-tab-paste-btn');
+
+  if (mode === 'form') {
+    if (formDiv) formDiv.style.display = 'block';
+    if (pasteDiv) pasteDiv.style.display = 'none';
+    if (formBtn) formBtn.className = 'btn btn-primary btn-sm';
+    if (pasteBtn) pasteBtn.className = 'btn btn-outline btn-sm';
+  } else {
+    if (formDiv) formDiv.style.display = 'none';
+    if (pasteDiv) pasteDiv.style.display = 'block';
+    if (formBtn) formBtn.className = 'btn btn-outline btn-sm';
+    if (pasteBtn) pasteBtn.className = 'btn btn-primary btn-sm';
+  }
+}
+
+async function submitManualCall() {
+  const sym = (document.getElementById('manual-sym-input').value || '').trim().toUpperCase();
+  const category = document.getElementById('manual-cat-input').value;
+  const action = document.getElementById('manual-action-input').value;
+  const entry = parseFloat(document.getElementById('manual-entry-input').value || 0);
+  const sl = parseFloat(document.getElementById('manual-sl-input').value || 0);
+  const tgt = parseFloat(document.getElementById('manual-tgt-input').value || 0);
+
+  if (!sym) {
+    showToast('దయచేసి Stock Symbol ఎంటర్ చేయండి (e.g. TATAMOTORS)', false);
+    return;
+  }
+  if (entry <= 0 || sl <= 0 || tgt <= 0) {
+    showToast('Entry, Stop Loss, Target Price 0 కంటే ఎక్కువగా ఉండాలి!', false);
+    return;
+  }
+
+  const btn = document.getElementById('btn-submit-manual-call');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerText = '⚡ Adding & Trading ₹10,000...';
+  }
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/angel-research/ingest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        symbol: sym,
+        action: action,
+        entry_price: entry,
+        stop_loss: sl,
+        target_price: tgt,
+        category: category,
+        company_name: sym
+      })
+    });
+    const res = await resp.json();
+    if (res.success) {
+      showToast(`🎉 ${sym} విజయవంతంగా యాడ్ అయింది! ₹10,000 ఆటో-పేపర్ ట్రేడ్ స్టార్ట్ అయింది!`);
+      closeAddCallModal();
+      document.getElementById('manual-sym-input').value = '';
+      document.getElementById('manual-entry-input').value = '';
+      document.getElementById('manual-sl-input').value = '';
+      document.getElementById('manual-tgt-input').value = '';
+      loadCallsAndPortfolio();
+    } else {
+      showToast('Error: ' + (res.message || 'Failed to add'), false);
+    }
+  } catch (err) {
+    showToast('Network error: ' + err, false);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerText = '🚀 Add & Auto Paper Trade (₹10,000)';
+    }
+  }
+}
+
+async function submitPastedCallFromModal() {
+  const txt = (document.getElementById('modal-paste-input').value || '').trim();
+  if (!txt) {
+    showToast('దయచేసి Angel One నోటిఫికేషన్ టెక్స్ట్ పేస్ట్ చేయండి!', false);
+    return;
+  }
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/angel-research/parse-text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: txt })
+    });
+    const res = await resp.json();
+    if (res.success) {
+      showToast(`✅ ${res.parsed.symbol} పార్స్ అయింది! ₹10,000 ట్రేడ్ ఎగ్జిక్యూట్ అయింది!`);
+      closeAddCallModal();
+      document.getElementById('modal-paste-input').value = '';
+      loadCallsAndPortfolio();
+    } else {
+      showToast(res.message || 'టెక్స్ట్ నుండి వివరాలు రికగ్నైజ్ కాలేదు. Form లో మాన్యువల్‌గా ఎంటర్ చేయండి.', false);
+    }
+  } catch (e) {
+    showToast('Error: ' + e, false);
+  }
+}
+
+async function deleteSingleCall(callId, sym, event) {
+  if (event) event.stopPropagation();
+  if (!confirm(`${sym} కాల్‌ను తీసివేయాలా?`)) return;
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/angel-research/call/${callId}`, {
+      method: 'DELETE'
+    });
+    const res = await resp.json();
+    if (res.success) {
+      showToast(`🗑️ ${sym} తొలగించబడింది`);
+      loadCallsAndPortfolio();
+    } else {
+      showToast('Delete failed: ' + res.message, false);
+    }
+  } catch (e) {
+    showToast('Network error: ' + e, false);
+  }
+}
+
+async function clearAllCallsPrompt() {
+  if (!confirm('పాత రికమండేషన్స్ అన్నీ క్లియర్ చేసి ఫ్రెష్‌గా స్టార్ట్ చేయాలా?')) return;
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/angel-research/clear-all`, {
+      method: 'POST'
+    });
+    const res = await resp.json();
+    if (res.success) {
+      showToast('🧹 పాత రికమండేషన్స్ అన్నీ క్లియర్ అయ్యాయి!');
+      loadCallsAndPortfolio();
+    } else {
+      showToast('Clear failed: ' + res.message, false);
+    }
+  } catch (e) {
+    showToast('Network error: ' + e, false);
   }
 }
 
