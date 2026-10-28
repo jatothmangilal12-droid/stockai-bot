@@ -707,18 +707,23 @@ def get_live_market_movers():
     with ThreadPoolExecutor(max_workers=16) as executor:
         results = [r for r in executor.map(fetch_mover, candidate_items) if r]
 
-    # Sort into Gainers and Losers
-    gainers = sorted([r for r in results if r["change_pct"] > 0], key=lambda x: x["change_pct"], reverse=True)
-    losers = sorted([r for r in results if r["change_pct"] < 0], key=lambda x: x["change_pct"])
+    # Filter for Early, Healthy Momentum (0.4% to 2.2% only).
+    # STRICT RULE: NEVER recommend Buying stocks already up >= 2.5% (prevents FOMO Top-Buyer Traps!)
+    healthy_gainers = [r for r in results if 0.4 <= r["change_pct"] < 2.5]
+    healthy_gainers.sort(key=lambda x: x["change_pct"], reverse=True)
+
+    healthy_losers = [r for r in results if -2.5 < r["change_pct"] <= -0.4]
+    healthy_losers.sort(key=lambda x: x["change_pct"])
 
     movers = []
 
-    # Process Top Gainers -> BUY / LONG Setups
-    for g in gainers[:4]:
+    # Process Early Momentum Gainers -> Realistic Intraday BUY Setups
+    for g in healthy_gainers[:4]:
         cmp = g["price"]
         pct = g["change_pct"]
-        tp1_gain = max(0.018, min(0.040, abs(pct) * 0.35))
-        sl_risk = 0.012
+        # Realistic Intraday Targets: 0.8% - 1.0% Target 1, 0.6% Stop Loss
+        tp1_gain = 0.009   # 0.9% Target 1 (Achievable in 15-30 mins)
+        sl_risk = 0.006    # 0.6% Stop Loss (Capital Protection)
         tp1 = round(cmp * (1 + tp1_gain), 2)
         sl = round(cmp * (1 - sl_risk), 2)
         movers.append({
@@ -728,21 +733,21 @@ def get_live_market_movers():
             "price": cmp,
             "change_pct": pct,
             "action": "BUY",
-            "confidence": min(94, int(84 + min(pct, 5.0) * 2)),
-            "pattern": f"Bullish Momentum Breakout (+{pct:.2f}%)",
+            "confidence": min(92, int(84 + pct * 2)),
+            "pattern": f"Early Bullish Breakout (+{pct:.2f}%)",
             "target_1": tp1,
-            "target_2": round(cmp * (1 + tp1_gain * 1.5), 2),
+            "target_2": round(cmp * 1.016, 2),
             "stop_loss": sl,
-            "risk_reward_ratio": f"1:{(tp1_gain/sl_risk):.1f}",
-            "rationale": f"NSE Top Gainer (+{pct:.2f}%); strong intraday relative strength and upside momentum."
+            "risk_reward_ratio": "1:1.5",
+            "rationale": f"Early stage breakout (+{pct:.2f}%); healthy relative strength without peak exhaustion. Realistic Target: ₹{tp1:.2f} (+0.9%), SL: ₹{sl:.2f} (-0.6%)."
         })
 
-    # Process Top Losers -> SELL / SHORT Setups (Intraday MIS)
-    for l in losers[:4]:
+    # Process Early Momentum Losers -> Realistic Intraday SELL Setups
+    for l in healthy_losers[:4]:
         cmp = l["price"]
         pct = l["change_pct"]
-        tp1_drop = max(0.018, min(0.040, abs(pct) * 0.35))
-        sl_risk = 0.012
+        tp1_drop = 0.009   # 0.9% Target 1
+        sl_risk = 0.006    # 0.6% Stop Loss
         tp1 = round(cmp * (1 - tp1_drop), 2)
         sl = round(cmp * (1 + sl_risk), 2)
         movers.append({
@@ -752,13 +757,13 @@ def get_live_market_movers():
             "price": cmp,
             "change_pct": pct,
             "action": "SELL",
-            "confidence": min(92, int(83 + min(abs(pct), 5.0) * 1.8)),
-            "pattern": f"Bearish Breakdown Sell ({pct:.2f}%)",
+            "confidence": min(91, int(83 + abs(pct) * 2)),
+            "pattern": f"Early Bearish Breakdown ({pct:.2f}%)",
             "target_1": tp1,
-            "target_2": round(cmp * (1 - tp1_drop * 1.5), 2),
+            "target_2": round(cmp * 0.984, 2),
             "stop_loss": sl,
-            "risk_reward_ratio": f"1:{(tp1_drop/sl_risk):.1f}",
-            "rationale": f"NSE Top Loser ({pct:.2f}%); intraday selling pressure and relative weakness."
+            "risk_reward_ratio": "1:1.5",
+            "rationale": f"Early breakdown ({pct:.2f}%); intraday selling pressure without oversold climax. Realistic Target: ₹{tp1:.2f} (-0.9%), SL: ₹{sl:.2f} (+0.6%)."
         })
 
     LIVE_MOVERS_CACHE = {"data": movers, "timestamp": now}
