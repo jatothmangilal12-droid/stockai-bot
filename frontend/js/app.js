@@ -77,7 +77,7 @@ const FALLBACK_CALLS = [
 ];
 
 const DEFAULT_PORTFOLIO = {
-  total_equity: 100016.50,
+  total_equity: 100161.00,
   cash_balance: 90211.00,
   total_invested: 9789.00,
   unrealized_pnl: 16.50,
@@ -94,7 +94,32 @@ const DEFAULT_PORTFOLIO = {
       unrealized_pnl_pct: 0.17
     }
   ],
-  closed_positions: []
+  closed_positions: [
+    {
+      id: 101,
+      symbol: "KAYNES.NS",
+      quantity: 3,
+      entry_price: 3125.00,
+      close_price: 3162.20,
+      realized_pnl: 111.60,
+      gain_loss_pct: 1.19,
+      is_profit: true,
+      close_reason: "TARGET_ACHIEVED",
+      close_time: "2026-10-28 11:30:00"
+    },
+    {
+      id: 102,
+      symbol: "PRESTIGE.NS",
+      quantity: 7,
+      entry_price: 1395.00,
+      close_price: 1400.85,
+      realized_pnl: 40.95,
+      gain_loss_pct: 0.42,
+      is_profit: true,
+      close_reason: "BOOK_PROFIT",
+      close_time: "2026-10-27 14:47:00"
+    }
+  ]
 };
 
 function showToast(msg, isSuccess = true) {
@@ -348,11 +373,11 @@ function renderPortfolio(port) {
 
   if (openCountBadge) openCountBadge.innerText = openPositions.length;
 
-  // Render Open Positions
+  // Render Open Positions (With Live Angel One Market Feed)
   if (openList) {
     if (openPositions.length === 0) {
       openList.innerHTML = `
-        <div style="text-align:center; padding:25px; background:rgba(15, 23, 42, 0.4); border-radius:12px; color:var(--text-muted); font-size:0.8rem;">
+        <div style="text-align:center; padding:30px; background:rgba(15, 23, 42, 0.4); border-radius:12px; color:var(--text-muted); font-size:0.8rem;">
           No active paper positions. New Angel One calls will auto-execute here with ₹10,000 allocation.
         </div>
       `;
@@ -361,26 +386,48 @@ function renderPortfolio(port) {
         const pnl = p.unrealized_pnl || 0.0;
         const pnlPct = p.unrealized_pnl_pct || 0.0;
         const isPos = pnl >= 0;
+        const sym = p.symbol.replace('.NS', '');
+        const entry = p.entry_price || 0.0;
+        const cmp = p.current_price || entry;
+        const sl = p.stop_loss || 0.0;
+        const tgt = p.target_price || 0.0;
+
         return `
-          <div class="call-card" style="margin-bottom:10px; padding:12px 14px;">
+          <div class="call-card" style="margin-bottom:12px; padding:14px; border-color:${isPos ? 'rgba(0, 245, 155, 0.3)' : 'rgba(255, 51, 102, 0.3)'};">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <div style="display:flex; align-items:center; gap:6px;">
+                <span class="pulse-dot" style="${isPos ? '' : 'background:#ff3366; box-shadow:0 0 10px #ff3366;'}"></span>
+                <span style="font-size:0.72rem; color:${isPos ? '#00f59b' : '#ff3366'}; font-weight:800; letter-spacing:0.5px;">LIVE ANGEL ONE TRADE</span>
+              </div>
+              <span class="badge" style="background:rgba(0, 229, 255, 0.15); color:#00e5ff; font-size:0.68rem; font-weight:800;">
+                ₹10,000 CAPITAL (${p.quantity} SHARES)
+              </span>
+            </div>
+
             <div style="display:flex; justify-content:space-between; align-items:center;">
               <div>
-                <span style="font-weight:800; font-size:1rem; color:#ffffff;">${p.symbol.replace('.NS', '')}</span>
-                <span class="badge" style="background:rgba(0, 229, 255, 0.15); color:#00e5ff; font-size:0.68rem; margin-left:6px; font-weight:800;">
-                  ${p.quantity} SHARES (~₹${(p.entry_price * p.quantity).toFixed(0)})
-                </span>
-                <div style="font-size:0.72rem; color:var(--text-muted); margin-top:2px;">
-                  Entry: ₹${p.entry_price.toFixed(2)} | Target: ₹${(p.target_price || 0).toFixed(2)} | SL: ₹${(p.stop_loss || 0).toFixed(2)}
+                <div style="font-weight:800; font-size:1.15rem; color:#ffffff; display:flex; align-items:center; gap:6px;">
+                  <span>${sym}</span>
+                  <span class="exchange-tag">NSE</span>
+                  <span style="font-size:0.72rem; background:rgba(0, 245, 155, 0.15); color:#00f59b; padding:1px 6px; border-radius:4px; font-weight:700;">BUY</span>
+                </div>
+                <div style="font-size:0.75rem; color:var(--text-muted); margin-top:3px;">
+                  Entry: <strong>₹${entry.toFixed(2)}</strong> | Target: <strong style="color:#00f59b;">₹${tgt.toFixed(2)}</strong> | SL: <strong style="color:#ff3366;">₹${sl.toFixed(2)}</strong>
                 </div>
               </div>
 
               <div style="text-align:right;">
-                <div style="font-weight:800; font-size:1rem; font-family:var(--font-mono); color:${isPos ? '#00f59b' : '#ff3366'};">
-                  ${isPos ? '+' : ''}₹${pnl.toFixed(2)} (${isPos ? '+' : ''}${pnlPct}%)
+                <div style="font-weight:800; font-size:1.25rem; font-family:var(--font-mono); color:${isPos ? '#00f59b' : '#ff3366'};">
+                  ${isPos ? '+' : ''}₹${pnl.toFixed(2)}
                 </div>
-                <div style="font-size:0.7rem; color:var(--text-muted);">CMP: ₹${p.current_price.toFixed(2)}</div>
-                <button class="btn btn-outline btn-sm" onclick="closePosition(${p.id}, ${p.current_price})" style="font-size:0.68rem; padding:2px 8px; margin-top:4px; border-color:rgba(255, 255, 255, 0.2);">
-                  Close
+                <div style="font-size:0.8rem; font-weight:700; color:${isPos ? '#00f59b' : '#ff3366'};">
+                  ${isPos ? '▲ +' : '▼ '}${pnlPct}% P&L
+                </div>
+                <div style="font-size:0.72rem; color:var(--text-secondary); margin-top:2px;">
+                  Live CMP: <strong>₹${cmp.toFixed(2)}</strong>
+                </div>
+                <button class="btn btn-outline btn-sm" onclick="closePosition(${p.id}, ${cmp})" style="font-size:0.68rem; padding:3px 10px; margin-top:6px; border-color:rgba(255, 255, 255, 0.25);">
+                  Exit Trade
                 </button>
               </div>
             </div>
@@ -390,24 +437,74 @@ function renderPortfolio(port) {
     }
   }
 
-  // Render Closed Positions History
+  // Render Closed Positions History (With Clear PROFIT / LOSS Badges & % Gain/Loss)
   if (closedList) {
     if (closedPositions.length === 0) {
-      closedList.innerHTML = `<div style="text-align:center; padding:15px; color:var(--text-muted); font-size:0.75rem;">No closed trades yet.</div>`;
+      closedList.innerHTML = `<div style="text-align:center; padding:20px; color:var(--text-muted); font-size:0.8rem;">No closed trades yet. Completed trades will display profit/loss and % return here.</div>`;
     } else {
       closedList.innerHTML = closedPositions.map(p => {
-        const pnl = p.realized_pnl || 0.0;
-        const isPos = pnl >= 0;
+        const pnl = parseFloat(p.realized_pnl || 0.0);
+        const gainPct = p.gain_loss_pct !== undefined ? parseFloat(p.gain_loss_pct) : (p.entry_price > 0 ? parseFloat((((p.close_price - p.entry_price) / p.entry_price) * 100).toFixed(2)) : 0.0);
+        const isProfit = pnl > 0 || gainPct > 0;
+        const isLoss = pnl < 0 || gainPct < 0;
+        const sym = (p.symbol || 'STOCK').replace('.NS', '');
+        const entry = parseFloat(p.entry_price || 0.0);
+        const close = parseFloat(p.close_price || entry);
+        const qty = p.quantity || 1;
+        const invested = p.invested_amount || Math.round(entry * qty);
+
+        let badgeLabel = '⚖️ BREAK-EVEN';
+        let badgeBg = 'rgba(255, 255, 255, 0.1)';
+        let badgeColor = '#ffffff';
+
+        if (isProfit) {
+          badgeLabel = '🟢 PROFIT (WIN)';
+          badgeBg = 'rgba(0, 245, 155, 0.18)';
+          badgeColor = '#00f59b';
+        } else if (isLoss) {
+          badgeLabel = '🔴 LOSS';
+          badgeBg = 'rgba(255, 51, 102, 0.18)';
+          badgeColor = '#ff3366';
+        }
+
+        let reasonLabel = p.close_reason || 'CLOSED';
+        if (reasonLabel === 'TARGET_HIT' || reasonLabel === 'TARGET_ACHIEVED') reasonLabel = '🎯 Target Hit';
+        else if (reasonLabel === 'STOP_LOSS_HIT' || reasonLabel === 'SL_HIT') reasonLabel = '🛑 Stop Loss Hit';
+        else if (reasonLabel === 'BOOK_PROFIT') reasonLabel = '✨ Booked Profit';
+        else if (reasonLabel === 'MANUAL_EXIT') reasonLabel = '✋ Manual Exit';
+
         return `
-          <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:rgba(15, 23, 42, 0.5); border-radius:10px; margin-bottom:8px; border:1px solid rgba(255, 255, 255, 0.05);">
-            <div>
-              <span style="font-weight:700; color:#ffffff;">${p.symbol.replace('.NS', '')}</span>
-              <span style="font-size:0.68rem; margin-left:6px; color:var(--text-muted);">
-                ${p.close_reason || 'CLOSED'} • ${p.quantity} Qty
+          <div style="background:rgba(15, 23, 42, 0.7); border:1px solid ${isProfit ? 'rgba(0, 245, 155, 0.25)' : (isLoss ? 'rgba(255, 51, 102, 0.25)' : 'rgba(255, 255, 255, 0.08)')}; border-radius:12px; padding:12px 16px; margin-bottom:10px; box-shadow:0 4px 16px rgba(0, 0, 0, 0.25);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span style="font-weight:800; font-size:1rem; color:#ffffff;">${sym}</span>
+                <span style="font-size:0.68rem; background:${badgeBg}; color:${badgeColor}; border:1px solid ${badgeColor}; padding:2px 8px; border-radius:6px; font-weight:800;">
+                  ${badgeLabel}
+                </span>
+              </div>
+              <span style="font-size:0.72rem; color:var(--text-muted); font-weight:600;">
+                ${reasonLabel}
               </span>
             </div>
-            <div style="font-weight:800; font-family:var(--font-mono); color:${isPos ? '#00f59b' : '#ff3366'};">
-              ${isPos ? '+' : ''}₹${pnl.toFixed(2)}
+
+            <div style="display:flex; justify-content:space-between; align-items:flex-end;">
+              <div>
+                <div style="font-size:0.78rem; color:var(--text-secondary);">
+                  Entry: <strong>₹${entry.toFixed(2)}</strong> ➔ Exit: <strong>₹${close.toFixed(2)}</strong>
+                </div>
+                <div style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">
+                  ${qty} Shares | ₹${invested.toLocaleString('en-IN')} Invested
+                </div>
+              </div>
+
+              <div style="text-align:right;">
+                <div style="font-size:1.15rem; font-weight:800; font-family:var(--font-mono); color:${badgeColor};">
+                  ${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}
+                </div>
+                <div style="font-size:0.78rem; font-weight:700; color:${badgeColor};">
+                  ${gainPct >= 0 ? '+' : ''}${gainPct.toFixed(2)}% Return
+                </div>
+              </div>
             </div>
           </div>
         `;

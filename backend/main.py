@@ -140,9 +140,30 @@ def is_indian_market_open() -> bool:
 
 
 def fetch_live_nse_quote(symbol: str) -> dict:
-    """Fetch high-speed real-time NSE quote with price & today's % change."""
-    # 1. Direct high-speed Yahoo chart quote (includes exact regularMarketPrice & chartPreviousClose)
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=15m&range=2d"
+    """Fetch high-speed real-time NSE quote directly from Angel One SmartAPI."""
+    # 1. Angel One SmartAPI Official Real-Time Live Quote
+    if angel_client.is_configured():
+        if not angel_client.is_authenticated:
+            try:
+                angel_client.login()
+            except Exception:
+                pass
+        if angel_client.is_authenticated:
+            try:
+                quote = angel_client.get_live_quote(symbol)
+                if quote and quote.get("price", 0) > 0:
+                    return {
+                        "price": round(float(quote["price"]), 2),
+                        "change_pct": round(float(quote.get("percent_change", 0.0)), 2),
+                        "currency": "₹",
+                        "source": "AngelOne_Live"
+                    }
+            except Exception as e:
+                print(f"[SmartAPI] Live quote fetch error for {symbol}: {e}")
+
+    # 2. Yahoo Chart Quote Fallback
+    clean_sym = symbol if symbol.endswith(".NS") or symbol.startswith("^") else f"{symbol}.NS"
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{clean_sym}?interval=15m&range=2d"
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
     try:
         with urllib.request.urlopen(req, timeout=3.5) as resp:
@@ -159,17 +180,6 @@ def fetch_live_nse_quote(symbol: str) -> dict:
             }
     except Exception as e:
         pass
-
-    # 2. Check Angel One SmartAPI fallback if configured and authenticated
-    if angel_client.is_configured() and angel_client.is_authenticated:
-        quote = angel_client.get_live_quote(symbol)
-        if quote and quote.get("price", 0) > 0:
-            return {
-                "price": round(float(quote["price"]), 2),
-                "change_pct": 0.0,
-                "currency": "₹",
-                "source": "AngelOne"
-            }
 
     return {"price": 0.0, "change_pct": 0.0, "currency": "₹", "source": "None"}
 
@@ -1096,15 +1106,21 @@ async def fast_price_tick_broadcaster():
             watchlist_symbols = {item["symbol"] for item in CURRENT_WATCHLIST[:15]}
             all_target_symbols = list(open_symbols.union(watchlist_symbols))
 
-            # Fetch batch quotes from Angel One if authenticated
-            if angel_client.is_configured() and angel_client.is_authenticated:
-                try:
-                    batch_quotes = await asyncio.to_thread(angel_client.get_batch_quotes, all_target_symbols)
-                    for sym, q in batch_quotes.items():
-                        if q.get("price", 0) > 0:
-                            LATEST_PRICES[sym] = round(float(q["price"]), 2)
-                except Exception as ex:
-                    print(f"[Broadcaster] Batch quote update error: {ex}")
+            # Fetch batch quotes from Angel One SmartAPI for all open positions & calls
+            if angel_client.is_configured():
+                if not angel_client.is_authenticated:
+                    try:
+                        await asyncio.to_thread(angel_client.login)
+                    except Exception:
+                        pass
+                if angel_client.is_authenticated:
+                    try:
+                        batch_quotes = await asyncio.to_thread(angel_client.get_batch_quotes, all_target_symbols)
+                        for sym, q in batch_quotes.items():
+                            if q.get("price", 0) > 0:
+                                LATEST_PRICES[sym] = round(float(q["price"]), 2)
+                    except Exception as ex:
+                        print(f"[Broadcaster] Angel One quote update error: {ex}")
 
             # For simulated positions without live quote, provide realistic market walk
             for r in open_rows:

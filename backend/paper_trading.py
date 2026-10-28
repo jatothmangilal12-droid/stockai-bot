@@ -63,13 +63,36 @@ class PaperTradingEngine:
             pnl_pct = (pnl / invested) * 100 if invested > 0 else 0.0
             pos["unrealized_pnl"] = round(pnl, 2)
             pos["unrealized_pnl_pct"] = round(pnl_pct, 2)
+            pos["invested_amount"] = round(pos["entry_price"] * pos["quantity"], 2)
             total_unrealized_pnl += pnl
             open_positions.append(pos)
 
         # Fetch closed positions for Win / Loss analytics
         cursor.execute("SELECT * FROM positions WHERE status = 'CLOSED' ORDER BY close_time DESC")
         raw_closed = cursor.fetchall()
-        closed_positions = [dict(r) for r in raw_closed]
+        closed_positions = []
+        for r in raw_closed:
+            p = dict(r)
+            entry = float(p.get("entry_price") or 0.0)
+            close = float(p.get("close_price") or entry)
+            side = p.get("side", "BUY")
+            qty = int(p.get("quantity", 1))
+            pnl = float(p.get("realized_pnl") or 0.0)
+            
+            # Accurate gain/loss percentage on total order investment
+            if entry > 0:
+                gain_loss_pct = round(((close - entry) / entry) * 100 if side == "BUY" else ((entry - close) / entry) * 100, 2)
+            else:
+                gain_loss_pct = 0.0
+
+            p["gain_loss_pct"] = gain_loss_pct
+            p["realized_pnl"] = round(pnl, 2)
+            p["is_profit"] = pnl > 0
+            p["is_loss"] = pnl < 0
+            p["is_breakeven"] = pnl == 0
+            p["invested_amount"] = round(entry * qty, 2)
+            p["exit_value"] = round(close * qty, 2)
+            closed_positions.append(p)
 
         total_closed = len(closed_positions)
         winning_positions = [p for p in closed_positions if (p["realized_pnl"] or 0) > 0]
