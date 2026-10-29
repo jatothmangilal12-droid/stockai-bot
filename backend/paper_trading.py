@@ -777,3 +777,214 @@ class PaperTradingEngine:
             "top_alpha_factor": "9 / 21 EMA & SuperTrend Momentum",
             "factors": factors
         }
+
+    # =========================================================================
+    # PENDING TRIGGER / LIMIT ORDERS (Wait for Entry Price before execution)
+    # =========================================================================
+    def create_pending_order(self, symbol: str, side: str, quantity: int, entry_price: float,
+                             initial_cmp: float, stop_loss: float = None, target_price: float = None,
+                             company_name: str = "", trade_type: str = "PENDING_LIMIT",
+                             execution_mode: str = "PAPER", notes: str = "") -> dict:
+        """Create a pending trigger order that waits for stock price to reach entry_price."""
+        if quantity <= 0 or entry_price <= 0:
+            return {"success": False, "message": "Invalid quantity or entry price"}
+
+        # Auto-determine trigger condition
+        side_up = side.upper()
+        if side_up == "BUY":
+            # If entry is higher than CMP -> buying breakout (trigger when cmp >= entry)
+            # If entry is lower than CMP -> buying pullback / dip (trigger when cmp <= entry)
+            condition = "GTE" if entry_price > initial_cmp else "LTE"
+        else:  # SELL
+            # If entry is lower than CMP -> selling breakdown (trigger when cmp <= entry)
+            # If entry is higher than CMP -> selling rally (trigger when cmp >= entry)
+            condition = "LTE" if entry_price < initial_cmp else "GTE"
+
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        try:
+            cursor.execute("""
+                INSERT INTO pending_trigger_orders (
+                    symbol, company_name, side, quantity, entry_price, initial_cmp,
+                    condition, stop_loss, target_price, trade_type, execution_mode,
+                    status, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
+            """, (
+                symbol, company_name or symbol, side_up, quantity, round(entry_price, 2),
+                round(initial_cmp, 2), condition, stop_loss, target_price,
+                trade_type, execution_mode, notes
+            ))
+            order_id = cursor.lastrowid
+            conn.commit()
+            return {
+                "success": True,
+                "order_id": order_id,
+                "symbol": symbol,
+                "side": side_up,
+                "quantity": quantity,
+                "entry_price": round(entry_price, 2),
+                "condition": condition,
+                "execution_mode": execution_mode,
+                "message": f"⏳ Pending {side_up} order set for {symbol} at ₹{entry_price:.2f} ({condition} trigger)"
+            }
+        except Exception as e:
+            conn.rollback()
+            return {"success": False, "message": f"Failed to save pending order: {str(e)}"}
+        finally:
+            conn.close()
+
+    def get_pending_orders(self, execution_mode: str = None) -> list:
+        """Fetch all currently pending trigger orders."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        if execution_mode:
+            cursor.execute("""
+                SELECT * FROM pending_trigger_orders 
+                WHERE status = 'PENDING' AND execution_mode = ? 
+                ORDER BY created_at DESC
+            """, (execution_mode,))
+        else:
+            cursor.execute("""
+                SELECT * FROM pending_trigger_orders 
+                WHERE status = 'PENDING' 
+                ORDER BY created_at DESC
+            """)
+        rows = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+        return rows
+
+    def cancel_pending_order(self, order_id: int) -> dict:
+        """Cancel a pending trigger order."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        try:
+            cursor.execute("""
+                UPDATE pending_trigger_orders 
+                SET status = 'CANCELLED' 
+                WHERE id = ? AND status = 'PENDING'
+            """, (order_id,))
+            if cursor.rowcount > 0:
+                conn.commit()
+                return {"success": True, "message": f"Order #{order_id} cancelled successfully."}
+            else:
+                conn.rollback()
+                return {"success": False, "message": f"Order #{order_id} not found or already triggered/cancelled."}
+        except Exception as e:
+            conn.rollback()
+            return {"success": False, "message": f"Error cancelling order: {str(e)}"}
+        finally:
+            conn.close()
+
+    def check_pending_triggers(self, current_prices: dict, angel_client=None) -> list:
+        """
+        Check all pending orders against live market ticks.
+        When CMP reaches target entry price, execute trade and transition order to TRIGGERED.
+        """
+        if not current_prices:
+            return []
+
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM pending_trigger_orders WHERE status = 'PENDING'")
+        pending_rows = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+
+        if not pending_rows:
+            return []
+
+        triggered_events = []
+        for p in pending_rows:
+            sym = p["symbol"]
+            clean_sym = sym.replace(".NS", "").replace("-EQ", "").upper()
+            cmp = current_prices.get(sym) or current_prices.get(clean_sym) or current_prices.get(f"{clean_sym}.NS")
+            if not cmp or cmp <= 0:
+                continue
+
+            entry_target = p["entry_price"]
+            cond = p["condition"]
+            is_hit = False
+
+            # Check trigger hit
+            if cond == "LTE" and cmp <= entry_target:
+                is_hit = True
+            elif cond == "GTE" and cmp >= entry_target:
+                is_hit = True
+
+            if not is_hit:
+                continue
+
+            # Atomically mark as TRIGGERED to avoid duplicate executions
+            conn_tx = get_connection()
+            cur_tx = conn_tx.cursor()
+            cur_tx.execute("BEGIN IMMEDIATE")
+            try:
+                cur_tx.execute("""
+                    UPDATE pending_trigger_orders
+                    SET status = 'TRIGGERED', triggered_at = CURRENT_TIMESTAMP,
+                        notes = COALESCE(notes, '') || ' | Triggered at CMP ₹' || ?
+                    WHERE id = ? AND status = 'PENDING'
+                """, (f"{cmp:.2f}", p["id"]))
+                if cur_tx.rowcount != 1:
+                    conn_tx.rollback()
+                    conn_tx.close()
+                    continue
+                conn_tx.commit()
+            except Exception:
+                conn_tx.rollback()
+                conn_tx.close()
+                continue
+            finally:
+                try:
+                    conn_tx.close()
+                except Exception:
+                    pass
+
+            # Execute trade based on execution_mode
+            exec_res = None
+            if p["execution_mode"] == "REAL_BROKER" and angel_client and angel_client.is_configured() and angel_client.is_authenticated:
+                try:
+                    from backend.broker_oco import angel_oco_manager
+                    sl_pct = (abs(cmp - p["stop_loss"]) / cmp) if (p["stop_loss"] and cmp > 0) else 0.007
+                    tp_pct = (abs(p["target_price"] - cmp) / cmp) if (p["target_price"] and cmp > 0) else 0.012
+                    exec_res = angel_oco_manager.execute_three_stage_order(
+                        angel_client=angel_client,
+                        symbol=sym,
+                        side=p["side"],
+                        quantity=p["quantity"],
+                        price=cmp,
+                        sl_pct=sl_pct,
+                        tp_pct=tp_pct
+                    )
+                except Exception as ex:
+                    print(f"[PendingTrigger] Broker execution error: {ex}")
+            else:
+                # Default Paper Trading
+                exec_res = self.execute_order(
+                    symbol=sym,
+                    side=p["side"],
+                    quantity=p["quantity"],
+                    price=cmp,
+                    stop_loss=p["stop_loss"],
+                    target_price=p["target_price"],
+                    company_name=p["company_name"],
+                    trade_type="PENDING_TRIGGER_HIT",
+                    ai_confidence=88.0,
+                    ai_reasons=f"Pending entry target ₹{entry_target:.2f} reached at CMP ₹{cmp:.2f}"
+                )
+
+            triggered_events.append({
+                "type": "PENDING_ORDER_TRIGGERED",
+                "order_id": p["id"],
+                "symbol": sym,
+                "company_name": p["company_name"],
+                "side": p["side"],
+                "quantity": p["quantity"],
+                "target_entry_price": entry_target,
+                "fill_price": cmp,
+                "execution_mode": p["execution_mode"],
+                "exec_result": exec_res
+            })
+
+        return triggered_events

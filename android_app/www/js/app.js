@@ -956,7 +956,7 @@ function renderScreenerCards(signals) {
             <div class="card-subtitle">${s.symbol} • NSE 15m Interval</div>
           </div>
           <div class="card-price-block">
-            <div class="card-price">${s.currency}${s.price}</div>
+            <div class="card-price" id="screener-card-price-${s.symbol.replace(/[^a-zA-Z0-9]/g, '')}">${s.currency}${s.price}</div>
             <span class="badge ${badgeClass}">${s.action}</span>
           </div>
         </div>
@@ -2518,7 +2518,10 @@ function renderApprovalCandidatesList(candidates) {
     const side = isBuy ? 'BUY' : 'SELL';
     const sideColor = isBuy ? 'var(--color-bullish)' : 'var(--color-bearish)';
     const sideBadgeCls = isBuy ? 'badge-buy' : 'badge-sell';
-    const cmp = Number(sig.price) || 1000;
+    const cleanSym = sig.symbol.replace('.NS', '').replace('-EQ', '').toUpperCase();
+    const liveQuote = (state.latestLivePrices || {})[sig.symbol] || (state.latestLivePrices || {})[cleanSym] || (state.latestLivePrices || {})[`${cleanSym}.NS`];
+    const cmp = liveQuote || Number(sig.price) || 1000;
+    sig.price = cmp;
 
     // Leverage-aware capital allocation for default quantity
     let availableCash = 100000;
@@ -2547,7 +2550,6 @@ function renderApprovalCandidatesList(candidates) {
     const tpDist = Math.abs(Math.round(((tp - cmp) / cmp) * 1000) / 10);
 
     const isLastHour = sessionInfo.isLastHour;
-    const cleanSym = sig.symbol.replace('.NS', '').replace('-EQ', '').toUpperCase();
     const isDematHeld = (state.dematHoldings || []).includes(cleanSym);
 
     return `
@@ -2567,18 +2569,29 @@ function renderApprovalCandidatesList(candidates) {
             </div>
           </div>
           <div style="text-align:right;">
-            <div style="font-size:1.15rem; font-weight:800; font-family:var(--font-mono); color:${sideColor};">
+            <div id="approval-cmp-${idx}" data-symbol="${cleanSym}" data-last-price="${cmp}" style="font-size:1.15rem; font-weight:800; font-family:var(--font-mono); color:${sideColor}; transition:color 0.25s ease;">
               ₹${cmp.toFixed(2)}
             </div>
-            <div style="font-size:0.68rem; color:var(--text-muted);">Current Market LTP</div>
+            <div style="font-size:0.68rem; color:var(--text-muted); display:flex; align-items:center; justify-content:flex-end; gap:4px;">
+              <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#10b981;"></span>
+              <span>Live Market LTP</span>
+            </div>
           </div>
         </div>
 
         <!-- 3-Box Value Grid: Entry Price, Stop Loss, Target -->
         <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; margin-top:12px;">
           <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.09); border-radius:8px; padding:8px 10px;">
-            <label style="font-size:0.68rem; color:var(--text-muted); font-weight:700; display:block; margin-bottom:3px;">Entry Price (₹)</label>
-            <input type="number" step="0.05" id="approval-price-input-${idx}" value="${cmp.toFixed(2)}" style="width:100%; padding:6px; font-weight:800; font-family:var(--font-mono); font-size:0.85rem; background:rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.18); border-radius:6px; color:#fff;" oninput="updateApprovalCandidateCustomValues(${idx})">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
+              <label style="font-size:0.68rem; color:var(--text-muted); font-weight:700;">Entry Price (₹)</label>
+              <button type="button" class="btn btn-outline btn-sm" id="approval-reset-price-btn-${idx}" onclick="resetApprovalCandidatePriceToCmp(${idx})" style="display:none; padding:1px 6px; font-size:0.65rem; color:#38bdf8; border-color:rgba(56,189,248,0.4); line-height:1.2;">
+                ↺ Live CMP
+              </button>
+            </div>
+            <input type="number" step="0.05" id="approval-price-input-${idx}" data-symbol="${cleanSym}" data-initial-cmp="${cmp}" value="${cmp.toFixed(2)}" style="width:100%; padding:6px; font-weight:800; font-family:var(--font-mono); font-size:0.85rem; background:rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.18); border-radius:6px; color:#fff;" oninput="onApprovalPriceUserEdited(${idx})">
+            <div id="approval-entry-mode-badge-${idx}" style="font-size:0.65rem; color:#10b981; font-weight:700; margin-top:3px;">
+              ⚡ Market Order (Immediate)
+            </div>
           </div>
           <div style="background:rgba(239,68,68,0.06); border:1px solid rgba(239,68,68,0.25); border-radius:8px; padding:8px 10px;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
@@ -2622,13 +2635,116 @@ function renderApprovalCandidatesList(candidates) {
           <button class="btn btn-outline btn-sm" style="font-size:0.78rem; padding:6px 14px; color:var(--text-muted);" onclick="rejectApprovalCandidate(${idx})">
             ✕ Skip
           </button>
-          <button class="btn ${isBuy ? 'btn-bullish' : 'btn-bearish'} btn-sm" style="font-size:0.82rem; font-weight:800; padding:6px 18px;" onclick="approveSingleCandidate(${idx})">
+          <button class="btn ${isBuy ? 'btn-bullish' : 'btn-bearish'} btn-sm" id="approval-execute-btn-${idx}" style="font-size:0.82rem; font-weight:800; padding:6px 18px;" onclick="approveSingleCandidate(${idx})">
             ${state.executionMode === 'REAL_BROKER' ? `⚡ Execute ${side} (5x MIS)` : `✓ Place ${side}`}
           </button>
         </div>
       </div>
     `;
   }).join('');
+}
+
+function onApprovalPriceUserEdited(idx) {
+  const priceInput = document.getElementById(`approval-price-input-${idx}`);
+  if (!priceInput) return;
+  priceInput.dataset.userEdited = 'true';
+
+  const resetBtn = document.getElementById(`approval-reset-price-btn-${idx}`);
+  if (resetBtn) resetBtn.style.display = 'inline-block';
+
+  updateApprovalCandidateCustomValues(idx, true);
+}
+
+function resetApprovalCandidatePriceToCmp(idx) {
+  const priceInput = document.getElementById(`approval-price-input-${idx}`);
+  if (!priceInput) return;
+  const sig = state.pendingApprovalTrades[idx];
+  if (!sig) return;
+  const sym = sig.symbol;
+  const cleanSym = sym.replace('.NS', '').replace('-EQ', '').toUpperCase();
+  const livePrice = (state.latestLivePrices || {})[sym] || (state.latestLivePrices || {})[cleanSym] || (state.latestLivePrices || {})[`${cleanSym}.NS`] || sig.price;
+
+  priceInput.value = Number(livePrice).toFixed(2);
+  priceInput.dataset.userEdited = 'false';
+  sig.price = Number(livePrice);
+
+  const resetBtn = document.getElementById(`approval-reset-price-btn-${idx}`);
+  if (resetBtn) resetBtn.style.display = 'none';
+
+  updateApprovalCandidateCustomValues(idx, false);
+}
+
+function updateApprovalEntryTypeBadge(idx, cmp) {
+  const sig = state.pendingApprovalTrades[idx];
+  if (!sig) return;
+  const priceInput = document.getElementById(`approval-price-input-${idx}`);
+  const modeBadge = document.getElementById(`approval-entry-mode-badge-${idx}`);
+  const execBtn = document.getElementById(`approval-execute-btn-${idx}`);
+  if (!priceInput || !modeBadge) return;
+
+  const userPrice = parseFloat(priceInput.value) || cmp;
+  const isBuy = !sig.action || !sig.action.includes('SELL');
+  const side = isBuy ? 'BUY' : 'SELL';
+  const diff = Math.abs(userPrice - cmp);
+
+  if (diff > 0.05 && priceInput.dataset.userEdited === 'true') {
+    const isBreakout = isBuy ? (userPrice > cmp) : (userPrice < cmp);
+    const condText = isBuy 
+      ? (userPrice > cmp ? `Wait for Breakout ≥ ₹${userPrice.toFixed(2)}` : `Wait for Dip ≤ ₹${userPrice.toFixed(2)}`)
+      : (userPrice < cmp ? `Wait for Breakdown ≤ ₹${userPrice.toFixed(2)}` : `Wait for Rally ≥ ₹${userPrice.toFixed(2)}`);
+    modeBadge.innerHTML = `<span style="color:#eab308; font-weight:800;">⏳ ${condText} (Pending Trigger)</span>`;
+    if (execBtn) {
+      execBtn.textContent = `⏳ Set Pending ${side} @ ₹${userPrice.toFixed(2)}`;
+      execBtn.style.background = 'linear-gradient(135deg, #d97706, #b45309)';
+      execBtn.style.color = '#fff';
+      execBtn.style.borderColor = '#f59e0b';
+    }
+  } else {
+    modeBadge.innerHTML = `<span style="color:#10b981; font-weight:700;">⚡ Market Order (Immediate)</span>`;
+    if (execBtn) {
+      execBtn.textContent = state.executionMode === 'REAL_BROKER' ? `⚡ Execute ${side} (5x MIS)` : `✓ Place ${side}`;
+      execBtn.style.background = '';
+      execBtn.style.color = '';
+      execBtn.style.borderColor = '';
+    }
+  }
+}
+
+function tickApprovalCandidatesLive() {
+  const modal = document.getElementById('ai-trade-approval-modal');
+  if (!modal || modal.style.display === 'none') return;
+  if (!state.pendingApprovalTrades || state.pendingApprovalTrades.length === 0) return;
+
+  state.pendingApprovalTrades.forEach((sig, idx) => {
+    const sym = sig.symbol;
+    const cleanSym = sym.replace('.NS', '').replace('-EQ', '').toUpperCase();
+    const livePrice = (state.latestLivePrices || {})[sym] || (state.latestLivePrices || {})[cleanSym] || (state.latestLivePrices || {})[`${cleanSym}.NS`];
+    if (!livePrice || livePrice <= 0) return;
+
+    // 1. Live CMP display in the card
+    const cmpEl = document.getElementById(`approval-cmp-${idx}`);
+    if (cmpEl) {
+      const prev = parseFloat(cmpEl.dataset.lastPrice) || sig.price || livePrice;
+      cmpEl.textContent = `₹${Number(livePrice).toFixed(2)}`;
+      cmpEl.dataset.lastPrice = livePrice;
+      if (livePrice > prev) {
+        cmpEl.style.color = '#10b981';
+      } else if (livePrice < prev) {
+        cmpEl.style.color = '#ef4444';
+      }
+    }
+
+    // 2. If user hasn't edited the entry price manually, update input with live price!
+    const priceInput = document.getElementById(`approval-price-input-${idx}`);
+    if (priceInput && priceInput.dataset.userEdited !== 'true') {
+      priceInput.value = Number(livePrice).toFixed(2);
+      sig.price = Number(livePrice);
+      updateApprovalCandidateCustomValues(idx, false);
+    }
+
+    // 3. Update entry mode badge & trigger text
+    updateApprovalEntryTypeBadge(idx, livePrice);
+  });
 }
 
 function adjustApprovalCandidateQty(idx, delta) {
@@ -2639,7 +2755,7 @@ function adjustApprovalCandidateQty(idx, delta) {
   updateApprovalCandidateCustomValues(idx);
 }
 
-function updateApprovalCandidateCustomValues(idx) {
+function updateApprovalCandidateCustomValues(idx, isUserEdit) {
   if (!state.pendingApprovalTrades || !state.pendingApprovalTrades[idx]) return;
   const sig = state.pendingApprovalTrades[idx];
   const priceInput = document.getElementById(`approval-price-input-${idx}`);
@@ -2672,6 +2788,10 @@ function updateApprovalCandidateCustomValues(idx) {
   if (slPctEl) slPctEl.textContent = `-${slDist}% SL`;
   if (tpPctEl) tpPctEl.textContent = `+${tpDist}% TP`;
   if (rrrEl) rrrEl.textContent = `RRR 1:${(tpDist / Math.max(slDist, 0.1)).toFixed(1)}`;
+
+  const cleanSym = sig.symbol.replace('.NS', '').replace('-EQ', '').toUpperCase();
+  const currentLive = (state.latestLivePrices || {})[sig.symbol] || (state.latestLivePrices || {})[cleanSym] || price;
+  updateApprovalEntryTypeBadge(idx, currentLive);
 }
 
 async function approveSingleCandidate(idx) {
@@ -2692,7 +2812,17 @@ async function approveSingleCandidate(idx) {
   sig.target_1 = customTp;
   sig.qty = customQty;
 
-  const ok = await executeTradeWithCustomQty(sig, customQty, customPrice, customSl, customTp);
+  const cleanSym = sig.symbol.replace('.NS', '').replace('-EQ', '').toUpperCase();
+  const currentLivePrice = (state.latestLivePrices || {})[sig.symbol] || (state.latestLivePrices || {})[cleanSym] || (state.latestLivePrices || {})[`${cleanSym}.NS`] || sig.price;
+  const isPending = Math.abs(customPrice - currentLivePrice) > 0.05 && priceInput && priceInput.dataset.userEdited === 'true';
+
+  let ok = false;
+  if (isPending) {
+    ok = await createPendingTriggerOrder(sig, customQty, customPrice, currentLivePrice, customSl, customTp);
+  } else {
+    ok = await executeTradeWithCustomQty(sig, customQty, customPrice, customSl, customTp);
+  }
+
   if (!ok) return;
 
   const approvedSym = sig.symbol.replace('.NS', '');
@@ -2705,7 +2835,7 @@ async function approveSingleCandidate(idx) {
     setTimeout(() => {
       closeAiTradeApprovalModal();
       switchTab('trading');
-      showToast(`🎉 All approved trades deployed! View your active positions below.`, 'success');
+      showToast(isPending ? `⏳ Pending order created! Watching market for your entry price.` : `🎉 Trade deployed! View active positions below.`, 'success');
     }, 600);
   }
 }
@@ -2733,7 +2863,9 @@ async function approveAllCandidateTrades() {
   }
 
   const toExecute = [...state.pendingApprovalTrades];
-  let count = 0;
+  let executedCount = 0;
+  let pendingCount = 0;
+
   for (let idx = 0; idx < toExecute.length; idx++) {
     const sig = toExecute[idx];
     const priceInput = document.getElementById(`approval-price-input-${idx}`);
@@ -2746,14 +2878,160 @@ async function approveAllCandidateTrades() {
     const customTp = tpInput ? parseFloat(tpInput.value) || sig.target_1 : sig.target_1;
     const customQty = qtyInput ? Math.max(1, parseInt(qtyInput.value) || 1) : (sig.qty || 5);
 
-    const ok = await executeTradeWithCustomQty(sig, customQty, customPrice, customSl, customTp);
-    if (ok) count++;
+    const cleanSym = sig.symbol.replace('.NS', '').replace('-EQ', '').toUpperCase();
+    const currentLivePrice = (state.latestLivePrices || {})[sig.symbol] || (state.latestLivePrices || {})[cleanSym] || (state.latestLivePrices || {})[`${cleanSym}.NS`] || sig.price;
+    const isPending = Math.abs(customPrice - currentLivePrice) > 0.05 && priceInput && priceInput.dataset.userEdited === 'true';
+
+    let ok = false;
+    if (isPending) {
+      ok = await createPendingTriggerOrder(sig, customQty, customPrice, currentLivePrice, customSl, customTp);
+      if (ok) pendingCount++;
+    } else {
+      ok = await executeTradeWithCustomQty(sig, customQty, customPrice, customSl, customTp);
+      if (ok) executedCount++;
+    }
   }
+
   state.pendingApprovalTrades = [];
   closeAiTradeApprovalModal();
   switchTab('trading');
-  showToast(`Processed ${count} trades on ${state.executionMode === 'REAL_BROKER' ? 'Angel One' : 'virtual portfolio'}!`, 'success');
+  showToast(`Processed: ${executedCount} Instant Trades | ${pendingCount} Pending Trigger Orders!`, 'success');
   loadPortfolio();
+  loadPendingOrders();
+}
+
+async function createPendingTriggerOrder(sig, qty, targetEntryPrice, currentPrice, sl, tp) {
+  const sym = sig.symbol;
+  const cleanSym = sym.replace('.NS', '').replace('-EQ', '').toUpperCase();
+  const isBuy = !sig.action || !sig.action.includes('SELL');
+  const side = isBuy ? 'BUY' : 'SELL';
+
+  try {
+    const res = await fetch(`${API_BASE}/api/orders/pending`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        symbol: sym,
+        side: side,
+        quantity: qty,
+        entry_price: targetEntryPrice,
+        initial_cmp: currentPrice,
+        stop_loss: sl,
+        target_price: tp,
+        company_name: sig.name || sig.company_name || cleanSym,
+        trade_type: 'PENDING_LIMIT',
+        execution_mode: state.executionMode || 'PAPER',
+        notes: `User decided entry: Wait for ₹${targetEntryPrice.toFixed(2)} (Initial CMP ₹${currentPrice.toFixed(2)})`
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success) {
+        showToast(`⏳ ఆర్డర్ సెట్ చేయబడింది! ${cleanSym} ధర ₹${targetEntryPrice.toFixed(2)} కు చేరే వరకు వేచి చూసి ${side} ట్రేడ్ స్టార్ట్ అవుతుంది. (Order #${data.order_id})`, 'info');
+        await loadPendingOrders();
+        return true;
+      } else {
+        showToast(data.message || 'Failed to place pending order', 'error');
+        return false;
+      }
+    } else {
+      showToast('Server error while placing pending order', 'error');
+      return false;
+    }
+  } catch (err) {
+    showToast(`Network error: ${err.message}`, 'error');
+    return false;
+  }
+}
+
+async function loadPendingOrders() {
+  const tbody = document.getElementById('pending-orders-tbody');
+  const countBadge = document.getElementById('pending-orders-count-badge');
+  if (!tbody) return;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/orders/pending`);
+    if (res.ok) {
+      const orders = await res.json();
+      state.pendingOrders = orders;
+      if (countBadge) countBadge.textContent = `${orders.length} Orders`;
+
+      if (!orders || orders.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="8" style="text-align:center; color:var(--text-muted); padding:16px;">
+              No pending orders. When you set a custom entry price, orders wait here until triggered.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = orders.map(o => {
+        const isBuy = o.side === 'BUY';
+        const sideBadgeCls = isBuy ? 'badge-buy' : 'badge-sell';
+        const cleanSym = o.symbol.replace('.NS', '').replace('-EQ', '').toUpperCase();
+        const livePrice = (state.latestLivePrices || {})[o.symbol] || (state.latestLivePrices || {})[cleanSym] || o.current_price || o.initial_cmp;
+        const diff = o.entry_price - livePrice;
+        const distPct = livePrice > 0 ? ((diff / livePrice) * 100).toFixed(2) : '0.00';
+        const condLabel = o.condition === 'GTE' ? `≥ ₹${Number(o.entry_price).toFixed(2)}` : `≤ ₹${Number(o.entry_price).toFixed(2)}`;
+
+        return `
+          <tr id="pending-row-${o.id}">
+            <td><strong>${cleanSym}</strong></td>
+            <td><span class="badge ${sideBadgeCls}">${o.side}</span></td>
+            <td>${o.quantity}</td>
+            <td><strong style="font-family:var(--font-mono); color:#eab308;">₹${Number(o.entry_price).toFixed(2)}</strong></td>
+            <td><span id="pending-cmp-${o.id}" style="font-family:var(--font-mono);">₹${Number(livePrice).toFixed(2)}</span></td>
+            <td><span id="pending-dist-${o.id}" style="font-size:0.75rem; color:${Math.abs(diff) < 2 ? '#10b981' : 'var(--text-muted)'}; font-family:var(--font-mono);">${diff > 0 ? '+' : ''}₹${diff.toFixed(2)} (${distPct}%)</span></td>
+            <td><span class="badge" style="background:rgba(234,179,8,0.15); color:#eab308; font-size:0.7rem;">${condLabel}</span></td>
+            <td>
+              <button class="btn btn-outline btn-sm text-bearish" onclick="cancelPendingOrder(${o.id})" style="padding:2px 8px; font-size:0.72rem; border-color:rgba(239,68,68,0.35);">
+                ✕ Cancel
+              </button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+  } catch (e) {
+    console.warn('[Pending Orders] Error loading:', e);
+  }
+}
+
+async function cancelPendingOrder(orderId) {
+  try {
+    const res = await fetch(`${API_BASE}/api/orders/pending/${orderId}`, {
+      method: 'DELETE'
+    });
+    if (res.ok) {
+      const data = await res.json();
+      showToast(data.message || 'Pending order cancelled', 'info');
+      await loadPendingOrders();
+    }
+  } catch (e) {
+    showToast(`Failed to cancel order: ${e.message}`, 'error');
+  }
+}
+
+function tickPendingOrdersLive() {
+  if (!state.pendingOrders || state.pendingOrders.length === 0) return;
+  state.pendingOrders.forEach(o => {
+    const cleanSym = o.symbol.replace('.NS', '').replace('-EQ', '').toUpperCase();
+    const livePrice = (state.latestLivePrices || {})[o.symbol] || (state.latestLivePrices || {})[cleanSym] || (state.latestLivePrices || {})[`${cleanSym}.NS`];
+    if (!livePrice || livePrice <= 0) return;
+
+    const cmpEl = document.getElementById(`pending-cmp-${o.id}`);
+    const distEl = document.getElementById(`pending-dist-${o.id}`);
+    if (cmpEl) cmpEl.textContent = `₹${Number(livePrice).toFixed(2)}`;
+    if (distEl) {
+      const diff = o.entry_price - livePrice;
+      const distPct = ((diff / livePrice) * 100).toFixed(2);
+      distEl.textContent = `${diff > 0 ? '+' : ''}₹${diff.toFixed(2)} (${distPct}%)`;
+      distEl.style.color = Math.abs(diff) < 2 ? '#10b981' : 'var(--text-muted)';
+    }
+  });
 }
 
 async function executeTradeWithCustomQty(sig, qty, customPrice, customSl, customTp) {
@@ -3469,6 +3747,7 @@ async function loadPortfolio() {
         };
         state.portfolio = p;
         renderPortfolioUI(p);
+        await loadPendingOrders();
         return;
       }
     } catch (e) {
@@ -3485,6 +3764,7 @@ async function loadPortfolio() {
     const p = await res.json();
     state.portfolio = p;
     renderPortfolioUI(p);
+    await loadPendingOrders();
   } catch (err) {
     // Local state fallback
     const localPositions = JSON.parse(localStorage.getItem('stockai_open_positions') || '[]');
@@ -3542,6 +3822,7 @@ async function loadPortfolio() {
     };
     state.portfolio = p;
     renderPortfolioUI(p);
+    await loadPendingOrders();
   }
 }
 
@@ -4338,6 +4619,8 @@ function scheduleTickRender() {
     _isTickRenderScheduled = false;
     tickOpenPositionsLive();
     tickTickerRibbonLive();
+    tickApprovalCandidatesLive();
+    tickPendingOrdersLive();
   });
 }
 
@@ -4599,6 +4882,10 @@ function tickTickerRibbonLive() {
       if (priceEl) {
         priceEl.textContent = `${s.currency || '₹'}${newPrice.toFixed(2)}`;
       }
+      const screenerPriceEl = document.getElementById(`screener-card-price-${cleanKey}`);
+      if (screenerPriceEl) {
+        screenerPriceEl.textContent = `${s.currency || '₹'}${newPrice.toFixed(2)}`;
+      }
     }
   });
 
@@ -4717,6 +5004,12 @@ function initWebSocket() {
             scheduleTickRender();
             checkMarketFeedStaleness();
           }
+        } else if (msg.type === 'PENDING_ORDER_TRIGGERED') {
+          const pev = msg.data || msg;
+          const clean = (pev.symbol || '').replace('.NS', '').replace('-EQ', '');
+          showToast(`🎯 Entry Target Hit! ${clean} reached ₹${pev.fill_price || pev.target_entry_price} -> ${pev.side} ${pev.quantity} shares trade started!`, 'success');
+          loadPortfolio();
+          loadPendingOrders();
         } else if (msg.type === 'SL_TP_TRIGGER') {
           msg.data.forEach(trig => {
             showToast(`🔔 ${trig.type}: ${trig.symbol} hit! Result: ${trig.result} (₹${trig.pnl})`, trig.result === 'WIN' ? 'success' : 'error');

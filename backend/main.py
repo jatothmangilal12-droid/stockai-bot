@@ -118,6 +118,20 @@ class WatchlistAddRequest(BaseModel):
     currency: Optional[str] = "₹"
 
 
+class PendingOrderRequest(BaseModel):
+    symbol: str
+    side: str  # 'BUY' or 'SELL'
+    quantity: int = Field(default=1, gt=0, le=5000)
+    entry_price: float = Field(gt=0.0)
+    initial_cmp: Optional[float] = Field(default=0.0)
+    stop_loss: Optional[float] = None
+    target_price: Optional[float] = None
+    company_name: Optional[str] = ""
+    trade_type: Optional[str] = "PENDING_LIMIT"
+    execution_mode: Optional[str] = "PAPER"
+    notes: Optional[str] = ""
+
+
 class AngelResearchIngestRequest(BaseModel):
     symbol: str
     action: Optional[str] = "BUY"
@@ -722,6 +736,58 @@ def reset_paper_portfolio():
     return paper_trading.reset_portfolio()
 
 
+# =============================================================================
+# PENDING TRIGGER / LIMIT ORDERS (Waiting for Entry Price)
+# =============================================================================
+@app.post("/api/orders/pending")
+def create_pending_trigger_order(req: PendingOrderRequest):
+    """Register a pending trigger/limit order that waits for stock price to reach entry_price."""
+    init_cmp = req.initial_cmp
+    if not init_cmp or init_cmp <= 0:
+        clean_sym = req.symbol.replace(".NS", "").replace("-EQ", "").upper()
+        init_cmp = LATEST_PRICES.get(req.symbol) or LATEST_PRICES.get(clean_sym) or req.entry_price
+
+    res = paper_trading.create_pending_order(
+        symbol=req.symbol,
+        side=req.side,
+        quantity=req.quantity,
+        entry_price=req.entry_price,
+        initial_cmp=init_cmp,
+        stop_loss=req.stop_loss,
+        target_price=req.target_price,
+        company_name=req.company_name,
+        trade_type=req.trade_type or "PENDING_LIMIT",
+        execution_mode=req.execution_mode or "PAPER",
+        notes=req.notes or ""
+    )
+    return json_sanitize(res)
+
+
+@app.get("/api/orders/pending")
+def get_pending_orders(execution_mode: Optional[str] = None):
+    """Retrieve all active pending trigger orders with real-time distance to target."""
+    orders = paper_trading.get_pending_orders(execution_mode=execution_mode)
+    for o in orders:
+        sym = o["symbol"]
+        clean = sym.replace(".NS", "").replace("-EQ", "").upper()
+        cmp = LATEST_PRICES.get(sym) or LATEST_PRICES.get(clean) or 0.0
+        o["current_price"] = cmp
+        if cmp > 0 and o.get("entry_price", 0) > 0:
+            diff = o["entry_price"] - cmp
+            o["price_distance"] = round(diff, 2)
+            o["distance_pct"] = round((diff / cmp) * 100, 2)
+        else:
+            o["price_distance"] = 0.0
+            o["distance_pct"] = 0.0
+    return json_sanitize(orders)
+
+
+@app.delete("/api/orders/pending/{order_id}")
+def cancel_pending_trigger_order(order_id: int):
+    """Cancel an active pending trigger order."""
+    return json_sanitize(paper_trading.cancel_pending_order(order_id))
+
+
 def get_live_market_movers():
     """
     Scans the NSE broader universe concurrently to retrieve real-time prices & today's % change.
@@ -1272,14 +1338,18 @@ async def fast_price_tick_broadcaster():
             def get_open_rows():
                 conn = get_connection()
                 c = conn.cursor()
-                c.execute("SELECT DISTINCT symbol, current_price, entry_price FROM positions WHERE status = 'OPEN'")
-                rows = c.fetchall()
+                c.execute("SELECT DISTINCT symbol FROM positions WHERE status = 'OPEN'")
+                rows = [r[0] for r in c.fetchall()]
+                try:
+                    c.execute("SELECT DISTINCT symbol FROM pending_trigger_orders WHERE status = 'PENDING'")
+                    rows.extend([r[0] for r in c.fetchall()])
+                except Exception:
+                    pass
                 conn.close()
-                return rows
+                return list(set(rows))
 
-            open_rows = await asyncio.to_thread(get_open_rows)
-            open_symbols = {r["symbol"] for r in open_rows}
-            watchlist_symbols = {item["symbol"] for item in CURRENT_WATCHLIST[:20]}
+            open_symbols = set(await asyncio.to_thread(get_open_rows))
+            watchlist_symbols = {item["symbol"] for item in CURRENT_WATCHLIST[:25]}
             all_target_symbols = list(open_symbols.union(watchlist_symbols))
 
             # Fetch batch quotes from Angel One SmartAPI for all open positions & watchlist
@@ -1327,6 +1397,14 @@ async def fast_price_tick_broadcaster():
                 except Exception as oco_ex:
                     print(f"[Broadcaster] OCO reconciliation error: {oco_ex}")
 
+            # 2C. Check Pending Trigger Orders (Waiting for Entry Price)
+            try:
+                pending_events = await asyncio.to_thread(paper_trading.check_pending_triggers, LATEST_PRICES, angel_client)
+                for pev in pending_events:
+                    await broadcast_ws(pev)
+            except Exception as p_ex:
+                print(f"[Broadcaster] Pending trigger check error: {p_ex}")
+
             # 3. Check SL/TP triggers in background thread
             triggered = await asyncio.to_thread(paper_trading.check_sl_tp_triggers, LATEST_PRICES)
             if triggered:
@@ -1357,10 +1435,17 @@ async def background_market_scanner():
     while True:
         try:
             await asyncio.sleep(25)  # Every 25 seconds
-            # 1. Check SL / TP Triggers on active positions
+            # 1. Check SL / TP Triggers & Pending Orders on active positions
             triggered = await asyncio.to_thread(paper_trading.check_sl_tp_triggers, LATEST_PRICES)
             if triggered:
                 await broadcast_ws({"type": "SL_TP_TRIGGER", "data": triggered})
+
+            try:
+                pending_events = await asyncio.to_thread(paper_trading.check_pending_triggers, LATEST_PRICES, angel_client)
+                for pev in pending_events:
+                    await broadcast_ws(pev)
+            except Exception:
+                pass
 
             # 2. Flash Breaking News Scanner
             now = time.time()

@@ -140,6 +140,28 @@ def init_db():
     )
     """)
 
+    # Pending Trigger / Limit Orders Table (Wait for user-decided Entry Price before execution)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS pending_trigger_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        company_name TEXT,
+        side TEXT NOT NULL,                  -- 'BUY' or 'SELL'
+        quantity INTEGER NOT NULL,
+        entry_price REAL NOT NULL,           -- Desired trigger/entry price
+        initial_cmp REAL NOT NULL,           -- Price when order was configured
+        condition TEXT NOT NULL,             -- 'LTE' (<=) or 'GTE' (>=)
+        stop_loss REAL,
+        target_price REAL,
+        trade_type TEXT DEFAULT 'PENDING_LIMIT',
+        execution_mode TEXT DEFAULT 'PAPER', -- 'PAPER' or 'REAL_BROKER'
+        status TEXT DEFAULT 'PENDING',       -- 'PENDING', 'TRIGGERED', 'CANCELLED', 'EXPIRED'
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        triggered_at TIMESTAMP
+    )
+    """)
+
     cursor.execute("PRAGMA table_info(positions)")
     existing_cols = [c[1] for c in cursor.fetchall()]
     if "trade_type" not in existing_cols:
