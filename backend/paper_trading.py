@@ -48,7 +48,8 @@ class PaperTradingEngine:
         for r in raw_open:
             pos = dict(r)
             sym = pos["symbol"]
-            curr_price = (current_prices or {}).get(sym, pos["current_price"])
+            clean_sym = sym.replace(".NS", "").replace("-EQ", "").upper()
+            curr_price = (current_prices or {}).get(sym) or (current_prices or {}).get(clean_sym) or (current_prices or {}).get(f"{clean_sym}.NS") or pos["current_price"]
             if curr_price and curr_price > 0:
                 pos["current_price"] = curr_price
 
@@ -413,7 +414,8 @@ class PaperTradingEngine:
         triggered = []
         for p in open_positions:
             sym = p["symbol"]
-            cmp = current_prices.get(sym)
+            clean_sym = sym.replace(".NS", "").replace("-EQ", "").upper()
+            cmp = (current_prices or {}).get(sym) or (current_prices or {}).get(clean_sym) or (current_prices or {}).get(f"{clean_sym}.NS")
             if not cmp or cmp <= 0:
                 continue
 
