@@ -3569,7 +3569,7 @@ async function loadPortfolio() {
             entry_price: entryPrice,
             current_price: ltp,
             unrealized_pnl: Math.round(pnl * 100) / 100,
-            unrealized_pnl_pct: margin > 0 ? Math.round((pnl / margin) * 10000) / 100 : 0.0,
+            unrealized_pnl_pct: entryPrice > 0 ? Math.round(((side === 'BUY' ? ltp - entryPrice : entryPrice - ltp) / entryPrice) * 10000) / 100 : 0.0,
             margin_blocked: margin,
             is_real: true,
             product_type: p.producttype || 'INTRADAY',
@@ -3636,8 +3636,9 @@ async function loadPortfolio() {
       pos.margin_blocked = marginBlocked;
       totalInvested += marginBlocked;
       const pnl = pos.side === 'BUY' ? (pos.current_price - pos.entry_price) * pos.quantity : (pos.entry_price - pos.current_price) * pos.quantity;
+      const stockMovePct = pos.entry_price > 0 ? (pos.side === 'BUY' ? (pos.current_price - pos.entry_price) / pos.entry_price : (pos.entry_price - pos.current_price) / pos.entry_price) * 100 : 0.0;
       pos.unrealized_pnl = Math.round(pnl * 100) / 100;
-      pos.unrealized_pnl_pct = marginBlocked > 0 ? Math.round((pnl / marginBlocked) * 10000) / 100 : 0.0;
+      pos.unrealized_pnl_pct = Math.round(stockMovePct * 100) / 100;
       totalUnrealized += pnl;
     });
 
@@ -4617,9 +4618,12 @@ function tickOpenPositionsLive() {
     const pnl = pos.side === 'BUY' 
       ? (newCmp - pos.entry_price) * pos.quantity 
       : (pos.entry_price - newCmp) * pos.quantity;
+    const stockMovePct = pos.entry_price > 0 
+      ? (pos.side === 'BUY' ? (newCmp - pos.entry_price) / pos.entry_price : (pos.entry_price - newCmp) / pos.entry_price) * 100 
+      : 0.0;
 
     pos.unrealized_pnl = Math.round(pnl * 100) / 100;
-    pos.unrealized_pnl_pct = marginBlocked > 0 ? Math.round((pnl / marginBlocked) * 10000) / 100 : 0.0;
+    pos.unrealized_pnl_pct = Math.round(stockMovePct * 100) / 100;
     totalUnrealized += pnl;
 
     // Update DOM cell for CMP with live arrow and glow flash

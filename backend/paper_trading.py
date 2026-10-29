@@ -57,12 +57,14 @@ class PaperTradingEngine:
 
             if pos["side"] == "BUY":
                 pnl = (pos["current_price"] - pos["entry_price"]) * pos["quantity"]
+                stock_move_pct = ((pos["current_price"] - pos["entry_price"]) / pos["entry_price"]) * 100 if pos["entry_price"] > 0 else 0.0
             else:  # SHORT SELL
                 pnl = (pos["entry_price"] - pos["current_price"]) * pos["quantity"]
+                stock_move_pct = ((pos["entry_price"] - pos["current_price"]) / pos["entry_price"]) * 100 if pos["entry_price"] > 0 else 0.0
 
-            pnl_pct = (pnl / invested) * 100 if invested > 0 else 0.0
             pos["unrealized_pnl"] = round(pnl, 2)
-            pos["unrealized_pnl_pct"] = round(pnl_pct, 2)
+            pos["unrealized_pnl_pct"] = round(stock_move_pct, 2)
+            pos["stock_move_pct"] = round(stock_move_pct, 2)
             pos["invested_amount"] = round(pos["entry_price"] * pos["quantity"], 2)
             total_unrealized_pnl += pnl
             open_positions.append(pos)
