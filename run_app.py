@@ -40,7 +40,10 @@ if __name__ == "__main__":
     print("=" * 65)
     print("[*] Starting backend engine & WebSocket server...\n")
 
-    # Automatically launch browser on PC
-    webbrowser.open(f"http://localhost:{port}")
+    # Automatically launch browser on PC if GUI display available
+    try:
+        webbrowser.open(f"http://localhost:{port}")
+    except Exception:
+        pass
 
     uvicorn.run("backend.main:app", host="0.0.0.0", port=port, reload=False)

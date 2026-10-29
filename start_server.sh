@@ -16,6 +16,7 @@ echo "[1/3] Installing Python dependencies..."
 pip3 install -r requirements.txt
 
 echo "[2/3] Stopping any old instances..."
+pkill -f "uvicorn" 2>/dev/null || true
 pkill -f "run_app.py" 2>/dev/null || true
 
 echo "[3/3] Launching StockAI 24/7 in background..."
