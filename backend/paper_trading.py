@@ -639,8 +639,10 @@ class PaperTradingEngine:
             if confidence < AI_MIN_CONFIDENCE:
                 continue
 
-            # Calculate safe position size (e.g., allocating ~₹15,000 per trade)
-            qty = max(1, int(AI_RISK_PER_TRADE / cmp))
+            # Risk-based position size from breakout signal (fixed risk ₹1,000 / risk_per_share)
+            qty = int(sig.get("qty") or 0)
+            if qty < 1:
+                continue
             sl = sig.get("stop_loss")
             tp = sig.get("target_1")
             reasons_summary = "; ".join(sig.get("reasons", [])[:3])

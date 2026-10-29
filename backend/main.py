@@ -39,7 +39,10 @@ def json_sanitize(obj):
         return obj.item()
     return obj
 
-from backend.config import DEFAULT_STOCKS, NIFTY_UNIVERSE, BASE_DIR
+import pandas as pd
+from backend.config import DEFAULT_STOCKS, NIFTY_UNIVERSE, BASE_DIR, RISK_PER_TRADE_RS
+from backend.strategy.features import build_features
+from backend.strategy.signal import breakout_signal
 from backend.news_sentiment import NewsSentimentAnalyzer
 from backend.technical_engine import TechnicalEngine
 from backend.signal_evaluator import SignalEvaluator
@@ -433,7 +436,6 @@ def get_market_screener(sector: Optional[str] = None, offset: int = 0):
 
 DISCOVER_CACHE = {"data": None, "timestamp": 0.0}
 SECTOR_HEATMAP_CACHE = {"data": None, "timestamp": 0.0}
-LIVE_MOVERS_CACHE = {"data": None, "timestamp": 0.0}
 REVERSALS_CACHE = {"data": None, "timestamp": 0.0}
 
 @app.get("/api/universe/discover")
@@ -788,109 +790,74 @@ def cancel_pending_trigger_order(order_id: int):
     return json_sanitize(paper_trading.cancel_pending_order(order_id))
 
 
-def get_live_market_movers():
-    """
-    Scans the NSE broader universe concurrently to retrieve real-time prices & today's % change.
-    Identifies real-time Top Gainers (Momentum Breakouts -> BUY) and Top Losers (Breakdown -> SELL SHORT).
-    Cached for 45s to avoid Yahoo rate limits.
-    """
-    global LIVE_MOVERS_CACHE
-    now = time.time()
-    if LIVE_MOVERS_CACHE["data"] and (now - LIVE_MOVERS_CACHE["timestamp"] < 45):
-        return LIVE_MOVERS_CACHE["data"]
+def ist_frame_from_engine(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert technical_engine.fetch_candlesticks output to lowercase OHLCV with IST DatetimeIndex."""
+    d = df.copy()
+    if d.empty or "time" not in d.columns:
+        return pd.DataFrame()
+    idx = pd.to_datetime(d["time"], unit="ms", utc=True).dt.tz_convert("Asia/Kolkata")
+    out = pd.DataFrame({
+        "open": d["Open"].values,
+        "high": d["High"].values,
+        "low": d["Low"].values,
+        "close": d["Close"].values,
+        "volume": d["Volume"].values,
+    }, index=pd.DatetimeIndex(idx))
+    return out.sort_index()
 
-    candidate_items = [s for s in NIFTY_UNIVERSE if not s["symbol"].startswith("^")]
 
-    def fetch_mover(item):
+def drop_incomplete_last_bar(d: pd.DataFrame) -> pd.DataFrame:
+    """A bar is complete only after its 5-min window closed. Drop the forming bar."""
+    if d.empty:
+        return d
+    now_ist = pd.Timestamp.now(tz="Asia/Kolkata")
+    return d[d.index + pd.Timedelta(minutes=5) <= now_ist]
+
+
+@app.get("/api/signals/intraday")
+def intraday_signals():
+    """
+    Breakout-from-consolidation signals only.
+    Never recommends stocks already moved >= 2.5% (EXTENDED) and never chases gainers/losers.
+    """
+    nifty_raw = technical_engine.fetch_candlesticks("^NSEI", period="5d", interval="5m")
+    nifty = ist_frame_from_engine(nifty_raw) if not nifty_raw.empty else pd.DataFrame()
+
+    signals, states = [], []
+    for item in CURRENT_WATCHLIST:
         sym = item["symbol"]
-        quote = fetch_live_nse_quote(sym)
-        if quote and quote.get("price", 0) > 0:
-            price = quote["price"]
-            pct = quote.get("change_pct", 0.0)
-            return {
+        if sym.startswith("^"):
+            continue
+        raw = technical_engine.fetch_candlesticks(sym, period="5d", interval="5m")
+        if raw.empty:
+            continue
+        d = drop_incomplete_last_bar(ist_frame_from_engine(raw))
+        if len(d) < 30:
+            continue
+        feats = build_features(d, nifty if not nifty.empty else None)
+        last = feats.iloc[-1]
+        sig = breakout_signal(last)
+        states.append({
+            "symbol": sym,
+            "state": str(last["state"]),
+            "day_move_pct": round(float(last["day_move_pct"]), 2)
+        })
+        if sig:
+            signals.append({
                 "symbol": sym,
                 "name": item.get("name", sym.replace(".NS", "")),
-                "sector": item.get("sector", "NSE Equities"),
-                "price": price,
-                "change_pct": pct
-            }
-        return None
+                "state": str(last["state"]),
+                "price": round(float(last["close"]), 2),
+                "signal": sig,
+            })
 
-    with ThreadPoolExecutor(max_workers=16) as executor:
-        results = [r for r in executor.map(fetch_mover, candidate_items) if r]
-
-    # Filter for Early, Healthy Momentum (0.4% to 2.2% only).
-    # STRICT RULE: NEVER recommend Buying stocks already up >= 2.5% (prevents FOMO Top-Buyer Traps!)
-    healthy_gainers = [r for r in results if 0.4 <= r["change_pct"] < 2.5]
-    healthy_gainers.sort(key=lambda x: x["change_pct"], reverse=True)
-
-    healthy_losers = [r for r in results if -2.5 < r["change_pct"] <= -0.4]
-    healthy_losers.sort(key=lambda x: x["change_pct"])
-
-    movers = []
-
-    # Process Early Momentum Gainers -> Realistic Intraday BUY Setups
-    for g in healthy_gainers[:4]:
-        cmp = g["price"]
-        pct = g["change_pct"]
-        # Realistic Intraday Targets: 0.8% - 1.0% Target 1, 0.6% Stop Loss
-        tp1_gain = 0.009   # 0.9% Target 1 (Achievable in 15-30 mins)
-        sl_risk = 0.006    # 0.6% Stop Loss (Capital Protection)
-        tp1 = round(cmp * (1 + tp1_gain), 2)
-        sl = round(cmp * (1 - sl_risk), 2)
-        movers.append({
-            "symbol": g["symbol"],
-            "name": g["name"],
-            "sector": g["sector"],
-            "price": cmp,
-            "change_pct": pct,
-            "action": "BUY",
-            "confidence": min(92, int(84 + pct * 2)),
-            "pattern": f"Early Bullish Breakout (+{pct:.2f}%)",
-            "target_1": tp1,
-            "target_2": round(cmp * 1.016, 2),
-            "stop_loss": sl,
-            "risk_reward_ratio": "1:1.5",
-            "rationale": f"Early stage breakout (+{pct:.2f}%); healthy relative strength without peak exhaustion. Realistic Target: ₹{tp1:.2f} (+0.9%), SL: ₹{sl:.2f} (-0.6%)."
-        })
-
-    # Process Early Momentum Losers -> Realistic Intraday SELL Setups
-    for l in healthy_losers[:4]:
-        cmp = l["price"]
-        pct = l["change_pct"]
-        tp1_drop = 0.009   # 0.9% Target 1
-        sl_risk = 0.006    # 0.6% Stop Loss
-        tp1 = round(cmp * (1 - tp1_drop), 2)
-        sl = round(cmp * (1 + sl_risk), 2)
-        movers.append({
-            "symbol": l["symbol"],
-            "name": l["name"],
-            "sector": l["sector"],
-            "price": cmp,
-            "change_pct": pct,
-            "action": "SELL",
-            "confidence": min(91, int(83 + abs(pct) * 2)),
-            "pattern": f"Early Bearish Breakdown ({pct:.2f}%)",
-            "target_1": tp1,
-            "target_2": round(cmp * 0.984, 2),
-            "stop_loss": sl,
-            "risk_reward_ratio": "1:1.5",
-            "rationale": f"Early breakdown ({pct:.2f}%); intraday selling pressure without oversold climax. Realistic Target: ₹{tp1:.2f} (-0.9%), SL: ₹{sl:.2f} (+0.6%)."
-        })
-
-    LIVE_MOVERS_CACHE = {"data": movers, "timestamp": now}
-    return movers
-
-
-@app.get("/api/ai/live-movers-scan")
-def get_live_movers_endpoint():
-    """Returns real-time NSE Top Gainers (BUY) & Top Losers (SELL) with dynamic technical signals."""
-    movers = get_live_market_movers()
-    return {
+    return json_sanitize({
         "success": True,
-        "count": len(movers),
-        "movers": movers
-    }
+        "count": len(signals),
+        "signals": signals,
+        "states": states,
+        "risk_per_trade_rs": RISK_PER_TRADE_RS,
+    })
 
 
 def get_pre_market_battle_plan():
@@ -1461,37 +1428,28 @@ async def background_market_scanner():
                 except Exception as ne:
                     print(f"[News Broadcast error] {ne}")
 
-            # 3. Execute AI Auto-Trading step ONLY during Indian Market Hours (Mon-Fri 09:15 - 15:30 IST)
+            # 3. AI Auto-Trader: breakout-from-consolidation signals only, during Indian Market Hours
             if not is_indian_market_open():
                 continue
-
+            sig_resp = await asyncio.to_thread(intraday_signals)
             signals = []
-            for item in CURRENT_WATCHLIST[:8]:
-                sym = item["symbol"]
-                cmp = LATEST_PRICES.get(sym, 0)
-                if cmp > 0 and sym in CACHE_ANALYSIS:
-                    cached = CACHE_ANALYSIS[sym]
-                    # Verify cache freshness (ignore signals older than 20 minutes)
-                    cached_at = cached.get("timestamp") or cached.get("cached_at", 0)
-                    if time.time() - cached_at > 1200:
-                        continue
-
-                    sig = cached.get("signal", {})
-                    signals.append({
-                        "symbol": sym,
-                        "name": item["name"],
-                        "action": sig.get("action", "NEUTRAL"),
-                        "confidence": sig.get("confidence", 0),
-                        "stop_loss": sig.get("stop_loss"),
-                        "target_1": sig.get("target_1"),
-                        "price": cmp,
-                        "reasons": sig.get("reasons", []),
-                        "macro_trend": sig.get("macro_trend", "NEUTRAL"),
-                        "exhaustion_ratio": sig.get("exhaustion_ratio", 0.0),
-                        "confluence_score": sig.get("confluence_score", 0.0),
-                        "smart_money": sig.get("smart_money", "Normal Volume")
-                    })
-
+            for s in sig_resp.get("signals", []):
+                sg = s.get("signal", {})
+                if not sg:
+                    continue
+                signals.append({
+                    "symbol": s["symbol"],
+                    "name": s.get("name") or s["symbol"].replace(".NS", ""),
+                    "action": sg["side"],
+                    "confidence": 100,
+                    "stop_loss": sg["sl"],
+                    "target_1": sg["tp"],
+                    "qty": sg.get("qty", 1),
+                    "price": s["price"],
+                    "reasons": [f"Breakout of {s['state']} range on 5m"],
+                    "macro_trend": "NEUTRAL",
+                    "exhaustion_ratio": 0.0,
+                })
             if signals:
                 ai_executed = await asyncio.to_thread(paper_trading.ai_autonomous_trade_step, signals, LATEST_PRICES)
                 if ai_executed:

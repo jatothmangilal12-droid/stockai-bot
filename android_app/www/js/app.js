@@ -3156,173 +3156,43 @@ async function executeTradeWithCustomQty(sig, qty, customPrice, customSl, custom
   return true;
 }
 
-// Autonomous AI Auto-Trader: Scans market, calculates SL & Target, and executes or requests approval
-async function scanLiveMarketMoversClientSide() {
-  const UNIVERSE = [
-    { symbol: "DATAPATTNS.NS", name: "Data Patterns", sector: "Defence" },
-    { symbol: "MANKIND.NS", name: "Mankind Pharma", sector: "Pharma" },
-    { symbol: "TATACONSUM.NS", name: "Tata Consumer Products", sector: "FMCG" },
-    { symbol: "POWERINDIA.NS", name: "Hitachi Energy India", sector: "Capital Goods" },
-    { symbol: "DIVISLAB.NS", name: "Divi's Laboratories", sector: "Pharma" },
-    { symbol: "ADANIENSOL.NS", name: "Adani Energy Solutions", sector: "Energy" },
-    { symbol: "TMCV.NS", name: "Tata Motors CV", sector: "Automobile" },
-    { symbol: "CUMMINSIND.NS", name: "Cummins India", sector: "Capital Goods" },
-    { symbol: "ENRIN.NS", name: "Siemens Energy India", sector: "Capital Goods" },
-    { symbol: "BHARTIARTL.NS", name: "Bharti Airtel", sector: "Telecom" },
-    { symbol: "BAJAJ-AUTO.NS", name: "Bajaj Auto", sector: "Automobile" },
-    { symbol: "MAZDOCK.NS", name: "Mazagon Dock Shipbuilders", sector: "Defence" },
-    { symbol: "AMBUJACEM.NS", name: "Ambuja Cements", sector: "Materials" },
-    { symbol: "RECLTD.NS", name: "REC Limited", sector: "Finance" },
-    { symbol: "BDL.NS", name: "Bharat Dynamics", sector: "Defence" },
-    { symbol: "ASIANPAINT.NS", name: "Asian Paints", sector: "Consumer" },
-    { symbol: "PIDILITIND.NS", name: "Pidilite Industries", sector: "Chemicals" },
-    { symbol: "COALINDIA.NS", name: "Coal India", sector: "Mining" },
-    { symbol: "GRASIM.NS", name: "Grasim Industries", sector: "Materials" },
-    { symbol: "SBIN.NS", name: "State Bank of India", sector: "Banking" },
-    { symbol: "GAIL.NS", name: "GAIL India", sector: "Energy" },
-    { symbol: "TCS.NS", name: "Tata Consultancy Services", sector: "IT" },
-    { symbol: "HAL.NS", name: "Hindustan Aeronautics", sector: "Defence" },
-    { symbol: "RELIANCE.NS", name: "Reliance Industries", sector: "Energy" },
-    { symbol: "INFY.NS", name: "Infosys", sector: "IT" },
-    { symbol: "HDFCBANK.NS", name: "HDFC Bank", sector: "Banking" },
-    { symbol: "ZOMATO.NS", name: "Zomato Ltd", sector: "Midcap" },
-    { symbol: "TATAPOWER.NS", name: "Tata Power", sector: "Energy" }
-  ];
-
-  const fetchPromises = UNIVERSE.map(async item => {
-    try {
-      let cmp = 0;
-      let prevClose = 0;
-      let pct = 0;
-
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${item.symbol}?interval=15m&range=2d`;
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
-      const res = await fetch(url, { signal: controller.signal });
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const json = await res.json();
-        const meta = json?.chart?.result?.[0]?.meta;
-        if (meta) {
-          cmp = Number(meta.regularMarketPrice || meta.chartPreviousClose || 0);
-          prevClose = Number(meta.chartPreviousClose || meta.previousClose || cmp);
-          pct = prevClose ? Math.round(((cmp - prevClose) / prevClose) * 10000) / 100 : 0.0;
-        }
-      }
-
-      if (!cmp && state.latestLivePrices && state.latestLivePrices[item.symbol]) {
-        cmp = Number(state.latestLivePrices[item.symbol]);
-      }
-
-      if (cmp > 0) {
-        return {
-          symbol: item.symbol,
-          name: item.name,
-          sector: item.sector,
-          price: cmp,
-          changePct: pct
-        };
-      }
-      return null;
-    } catch (e) {
-      return null;
-    }
-  });
-
-  const results = await Promise.allSettled(fetchPromises);
-  const quotes = results
-    .filter(r => r.status === 'fulfilled' && r.value !== null)
-    .map(r => r.value);
-
-  if (quotes.length === 0) return [];
-
-  // Sort into Gainers and Losers
-  const gainers = quotes.filter(q => q.changePct > 0).sort((a, b) => b.changePct - a.changePct);
-  const losers = quotes.filter(q => q.changePct < 0).sort((a, b) => a.changePct - b.changePct);
-
-  const setups = [];
-
-  // Top Gainers -> BUY Setups
-  gainers.slice(0, 4).forEach(g => {
-    const cmp = g.price;
-    const pct = g.changePct;
-    const tpGain = Math.max(0.018, Math.min(0.040, Math.abs(pct) * 0.35));
-    const slRisk = 0.012;
-    setups.push({
-      symbol: g.symbol,
-      name: g.name,
-      sector: g.sector,
-      price: cmp,
-      change_pct: pct,
-      action: "BUY",
-      confidence: Math.min(94, Math.round(84 + Math.min(pct, 5.0) * 2)),
-      pattern: `Bullish Breakout (+${pct.toFixed(2)}%)`,
-      target_1: Math.round(cmp * (1 + tpGain) * 100) / 100,
-      target_2: Math.round(cmp * (1 + tpGain * 1.5) * 100) / 100,
-      stop_loss: Math.round(cmp * (1 - slRisk) * 100) / 100,
-      risk_reward_ratio: `1:${(tpGain / slRisk).toFixed(1)}`,
-      rationale: `NSE Top Gainer (+${pct.toFixed(2)}%); heavy buyer volume breaking above 15m VWAP & 21 EMA.`
-    });
-  });
-
-  // Top Losers -> SELL Setups (Intraday Short MIS)
-  losers.slice(0, 4).forEach(l => {
-    const cmp = l.price;
-    const pct = l.changePct;
-    const tpDrop = Math.max(0.018, Math.min(0.040, Math.abs(pct) * 0.35));
-    const slRisk = 0.012;
-    setups.push({
-      symbol: l.symbol,
-      name: l.name,
-      sector: l.sector,
-      price: cmp,
-      change_pct: pct,
-      action: "SELL",
-      confidence: Math.min(92, Math.round(83 + Math.min(Math.abs(pct), 5.0) * 1.8)),
-      pattern: `Bearish Breakdown (${pct.toFixed(2)}%)`,
-      target_1: Math.round(cmp * (1 - tpDrop) * 100) / 100,
-      target_2: Math.round(cmp * (1 - tpDrop * 1.5) * 100) / 100,
-      stop_loss: Math.round(cmp * (1 + slRisk) * 100) / 100,
-      risk_reward_ratio: `1:${(tpDrop / slRisk).toFixed(1)}`,
-      rationale: `NSE Top Loser (${pct.toFixed(2)}%); institutional selling breakdown below 15m VWAP & 200 EMA.`
-    });
-  });
-
-  return setups;
+// Breakout-from-consolidation signals (backend only). No gainer/loser chase.
+async function fetchIntradaySignals() {
+  try {
+    const res = await fetch(`${API_BASE}/api/signals/intraday`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.signals || []).map(s => ({
+      symbol: s.symbol,
+      name: s.name || s.symbol.replace('.NS', ''),
+      action: s.signal.side,                  // "BUY" or "SELL"
+      price: s.price,
+      stop_loss: s.signal.sl,
+      target_1: s.signal.tp,
+      qty: s.signal.qty,                      // risk-based qty from backend
+      confidence: 85,
+      pattern: `Breakout of ${s.state} range (5m)`,
+      rationale: `State: ${s.state} | Risk ₹${data.risk_per_trade_rs} | Entry on breakout, SL at consolidation`,
+      sector: 'NSE Equities'
+    }));
+  } catch (e) {
+    console.warn('Intraday signals fetch error:', e);
+    return [];
+  }
 }
 
 async function triggerPreMarketPlan() {
   const btn = document.getElementById('btn-pre-market-radar');
-  if (btn) btn.textContent = '⏳ Analyzing Pre-Market...';
-  showToast('🌅 Running Pre-Market Predictive Engine (Evaluating Daily Structures, 20 EMA, & Volume Accumulation)...', 'info');
+  if (btn) btn.textContent = '⏳ Analyzing Setups...';
+  showToast('🔍 Scanning 5m consolidation & compression ranges for high-probability breakouts...', 'info');
 
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
-    const res = await fetch(`${API_BASE}/api/ai/pre-market-plan`, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.plan && data.plan.length > 0) {
-        if (btn) btn.textContent = '🌅 Pre-Market Radar';
-        openAiTradeApprovalModal(data.plan);
-        showToast(`🌅 Pre-Market Battle-Plan Ready: Found ${data.plan.length} Buy & Sell opening trigger setups!`, 'success');
-        return;
-      }
-    }
-  } catch (e) {
-    console.warn('Pre-market API error:', e);
-  }
-
-  // Client-side fallback: run live movers scanner which provides genuine market triggers
-  const candidates = await scanLiveMarketMoversClientSide();
+  const candidates = await fetchIntradaySignals();
   if (btn) btn.textContent = '🌅 Pre-Market Radar';
   if (candidates && candidates.length > 0) {
     openAiTradeApprovalModal(candidates);
-    showToast(`🌅 Pre-Market Analysis Complete: ${candidates.length} stocks primed for opening breakout/breakdown!`, 'success');
+    showToast(`🎯 Found ${candidates.length} breakout-from-consolidation setups!`, 'success');
   } else {
-    showToast('Unable to fetch pre-market setups. Check internet connection.', 'error');
+    showToast('No breakout setups active right now. Monitoring for consolidation squeezes!', 'info');
   }
 }
 
@@ -3331,37 +3201,17 @@ async function triggerAiAutoTradeNow() {
 
   const sessionInfo = getMarketSessionInfo();
   if (sessionInfo.session === 'OFF_MARKET') {
-    showToast('⏱️ Off-Market Hours (Post 03:30 PM). Running AI scan on today\'s final market closing movers!', 'info');
+    showToast('⏱️ Off-Market Hours (Post 03:30 PM). Running AI scan on 5m consolidation breakout structures!', 'info');
   }
 
   if (sessionInfo.isLastHour) {
     showToast('⚠️ Caution: High-chop EOD Auto-Squareoff Window (after 02:30 PM). Use conservative quantities!', 'info');
   }
 
-  if (btn) btn.textContent = '⏳ AI Scanning Live Dalal Street Movers...';
+  if (btn) btn.textContent = '⏳ AI Scanning 5m Breakout Setups...';
 
-  let candidates = [];
-
-  // 1. Fetch genuine live Top Gainers & Losers from Backend
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4500);
-    const res = await fetch(`${API_BASE}/api/ai/live-movers-scan`, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.movers && data.movers.length > 0) {
-        candidates = data.movers;
-      }
-    }
-  } catch (err) {
-    console.warn('Backend live movers scan failed, running client-side real-time scanner:', err);
-  }
-
-  // 2. Client-side Real-time Scanner Fallback (Zero dummy data, scans live quotes directly!)
-  if (!candidates || candidates.length === 0) {
-    candidates = await scanLiveMarketMoversClientSide();
-  }
+  // Fetch breakout-from-consolidation signals only (no gainer/loser chase)
+  let candidates = await fetchIntradaySignals();
 
   // Sync latest live prices to state
   candidates.forEach(item => {
@@ -3404,7 +3254,7 @@ async function triggerAiAutoTradeNow() {
   }
 
   if (candidates.length === 0) {
-    showToast('All recommended stock setups are already active in your portfolio!', 'info');
+    showToast('No new breakout candidates found. Monitoring consolidation ranges!', 'info');
     if (btn) btn.textContent = '⚡ Run AI Auto-Trade Scan';
     return;
   }
@@ -3415,7 +3265,7 @@ async function triggerAiAutoTradeNow() {
   if (mode === 'APPROVAL') {
     if (btn) btn.textContent = '⚡ Run AI Auto-Trade Scan';
     openAiTradeApprovalModal(candidates);
-    showToast(`🛡️ AI found ${candidates.length} trade opportunities. Review & approve your preferred stocks & quantities!`, 'info');
+    showToast(`🛡️ AI found ${candidates.length} breakout opportunities. Review & approve your preferred setups!`, 'info');
     return;
   }
 
@@ -3435,8 +3285,9 @@ async function triggerAiAutoTradeNow() {
     if (localPositions.some(p => p.symbol === sym)) continue; // Don't duplicate
 
     const cmp = Number(sig.price) || 1000;
-    // Allocate ~₹15,000 order value per trade with 5x leverage (~₹3,000 margin)
-    const qty = Math.max(2, Math.floor(15000 / cmp));
+    // Risk-based position sizing from backend breakout signal
+    const qty = Number(sig.qty) || 0;
+    if (qty < 1) continue;
     const cost = qty * cmp;
     const marginReq = Math.round((cost / INTRADAY_LEVERAGE) * 100) / 100;
 

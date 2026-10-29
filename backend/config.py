@@ -222,3 +222,20 @@ INSTITUTIONAL_DELIVERY_SPIKE_RATIO = 2.0     # 2.0x volume surge with narrow spr
 
 # Optional Gemini API key
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+
+# ===================== Intraday Breakout Strategy =====================
+STRATEGY_BAR_INTERVAL = "5m"
+CONSOL_BARS = 12                 # last 12 x 5m = 60 min consolidation window
+VOL_LOOKBACK = 20                # volume average window
+VOL_BREAKOUT_MULT = 1.8          # breakout bar volume must be >= 1.8x average
+SQUEEZE_PCTILE = 0.30            # consolidation range in bottom 30% of last 100 bars
+REQUIRE_SQUEEZE = True           # hypothesis to test in backtest (set False to compare)
+EXTENDED_MOVE_PCT = 2.5          # day move >= 2.5% => EXTENDED, never enter
+MAX_CHASE_PCT = 0.4              # breakout bar close must be within 0.4% of level
+STOP_BUFFER_PCT = 0.05           # SL placed just beyond consolidation level
+RR_TARGET = 2.0                  # target = 2R
+TIME_STOP_BARS = 8               # 8 x 5m = 40 min; if no move, exit
+RISK_PER_TRADE_RS = 1000.0       # max loss per trade (qty = risk / risk_per_share)
+ENTRY_CUTOFF_HHMM = (15, 10)     # no new entries after 15:10 IST
+EOD_EXIT_HHMM = (15, 15)         # force exit at 15:15 IST
+COST_RATE_ROUNDTRIP = 0.0012     # approx charges + slippage on turnover (VERIFY with broker calculator)
