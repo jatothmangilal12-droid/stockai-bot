@@ -4225,6 +4225,9 @@ function saveServerConfig() {
   const val = urlInput.value.trim();
   if (val) {
     localStorage.setItem('stockai_server_url', val);
+    if (window.StockAINative && typeof window.StockAINative.setBackendUrl === 'function') {
+      window.StockAINative.setBackendUrl(val);
+    }
     showToast('Server URL saved! Reloading...', 'success');
     setTimeout(() => window.location.reload(), 1000);
   }
@@ -4234,6 +4237,9 @@ function initServerConfigUI() {
   const urlInput = document.getElementById('server-url-input');
   if (urlInput) {
     urlInput.value = API_BASE;
+  }
+  if (window.StockAINative && typeof window.StockAINative.setBackendUrl === 'function') {
+    window.StockAINative.setBackendUrl(API_BASE);
   }
 }
 
@@ -5230,6 +5236,14 @@ function playInstitutionalAlertSiren() {
 
 function testAlertSirenSound() {
   try {
+    // 1. If running in native StockAI Android APK, trigger native alarm speaker sound directly!
+    if (window.StockAINative && typeof window.StockAINative.triggerNativeLoudAlert === 'function') {
+      window.StockAINative.triggerNativeLoudAlert("RELIANCE.NS", "BUY", 1250.0, 1240.0, 1270.0);
+      showToast('🔊 Playing Native Loud Alarm through Phone Speaker!', 'info');
+      return;
+    }
+
+    // 2. Fallback to Web Audio API high-urgency synthesizer
     const ctx = getAudioContext();
     if (ctx && ctx.state === 'suspended') {
       ctx.resume().then(() => playInstitutionalAlertSiren());
@@ -5244,20 +5258,24 @@ function testAlertSirenSound() {
 
 async function testMobilePushAlert() {
   try {
-    const topic = (document.getElementById('alert-ntfy-topic')?.value || _alertSettingsCache.ntfy_topic || 'stockai_jatot_alerts').trim();
-    showToast(`📲 Sending Urgent Test Notification to topic: ${topic}...`, 'info');
-    
-    // Also play in-app sound so user hears both!
+    // 1. If native Android APK is active, trigger native loud alarm & heads-up alert immediately!
+    if (window.StockAINative && typeof window.StockAINative.triggerNativeLoudAlert === 'function') {
+      window.StockAINative.triggerNativeLoudAlert("TEST_BREAKOUT", "BUY", 1500.0, 1485.0, 1530.0);
+      showToast('🔔 Native Android Loud Alarm & Notification Triggered!', 'success');
+    }
+
+    // Also play in-app siren sound
     playInstitutionalAlertSiren();
 
+    // 2. Dispatch backend test alert (so background service polling will also detect it!)
     const res = await fetch(`${API_BASE}/api/alerts/test`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic: topic })
+      body: JSON.stringify({})
     });
     const data = await res.json();
     if (data.success) {
-      showToast(`✅ Urgent Push Alert sent! Check your phone (priority: max)`, 'success');
+      showToast('✅ Test Alert broadcasted! Even if screen is off, phone will ring loudly!', 'success');
       loadAlertHistory();
     } else {
       showToast(`Push failed: ${data.message || data.error}`, 'error');
@@ -5369,8 +5387,10 @@ function handleIncomingBreakoutAlert(data) {
   const isBuy = side === 'BUY';
   const color = isBuy ? '#10b981' : '#ef4444';
 
-  // 1. Play Loud Audio Siren if enabled
-  if (_alertSettingsCache.sound_enabled) {
+  // 1. Play Loud Audio Siren (Native Android speaker alarm or Web Audio API)
+  if (window.StockAINative && typeof window.StockAINative.triggerNativeLoudAlert === 'function') {
+    window.StockAINative.triggerNativeLoudAlert(symbol, side, price, sl, tp);
+  } else if (_alertSettingsCache.sound_enabled) {
     playInstitutionalAlertSiren();
   }
 
