@@ -50,6 +50,13 @@ from backend.paper_trading import PaperTradingEngine
 from backend.angel_one import AngelOneClient
 from backend.angel_research import AngelResearchEngine, CAPITAL_PER_TRADE
 from backend.database import get_connection
+from backend.alert_dispatcher import (
+    get_alert_settings,
+    update_alert_settings,
+    dispatch_breakout_alert,
+    send_test_alert,
+    get_alert_history
+)
 
 app = FastAPI(title="StockAI - Indian Market 15m Pattern & Sentiment Bot", version="2.0.0")
 
@@ -148,6 +155,21 @@ class AngelResearchIngestRequest(BaseModel):
 
 class AngelTextParseRequest(BaseModel):
     text: str
+
+
+class AlertSettingsRequest(BaseModel):
+    ntfy_topic: Optional[str] = "stockai_jatot_alerts"
+    ntfy_enabled: Optional[bool] = True
+    telegram_token: Optional[str] = ""
+    telegram_chat_id: Optional[str] = ""
+    telegram_enabled: Optional[bool] = False
+    sound_enabled: Optional[bool] = True
+    auto_scan_enabled: Optional[bool] = True
+    cooldown_minutes: Optional[int] = 15
+
+
+class TestAlertRequest(BaseModel):
+    topic: Optional[str] = None
 
 
 def is_indian_market_open() -> bool:
@@ -1428,32 +1450,43 @@ async def background_market_scanner():
                 except Exception as ne:
                     print(f"[News Broadcast error] {ne}")
 
-            # 3. AI Auto-Trader: breakout-from-consolidation signals only, during Indian Market Hours
-            if not is_indian_market_open():
-                continue
-            sig_resp = await asyncio.to_thread(intraday_signals)
-            signals = []
-            for s in sig_resp.get("signals", []):
-                sg = s.get("signal", {})
-                if not sg:
-                    continue
-                signals.append({
-                    "symbol": s["symbol"],
-                    "name": s.get("name") or s["symbol"].replace(".NS", ""),
-                    "action": sg["side"],
-                    "confidence": 100,
-                    "stop_loss": sg["sl"],
-                    "target_1": sg["tp"],
-                    "qty": sg.get("qty", 1),
-                    "price": s["price"],
-                    "reasons": [f"Breakout of {s['state']} range on 5m"],
-                    "macro_trend": "NEUTRAL",
-                    "exhaustion_ratio": 0.0,
-                })
-            if signals:
-                ai_executed = await asyncio.to_thread(paper_trading.ai_autonomous_trade_step, signals, LATEST_PRICES)
-                if ai_executed:
-                    await broadcast_ws({"type": "AI_AUTO_TRADE_EXECUTED", "data": ai_executed})
+            # 3. AI Auto-Trader & High-Priority Mobile Breakout Alert Dispatcher
+            if is_indian_market_open():
+                sig_resp = await asyncio.to_thread(intraday_signals)
+                signals = []
+                for s in sig_resp.get("signals", []):
+                    sg = s.get("signal", {})
+                    if not sg:
+                        continue
+
+                    # 🔔 Dispatch Mobile Push Notification (ntfy Priority 5 / Telegram / DB log)
+                    try:
+                        alert_info = await asyncio.to_thread(dispatch_breakout_alert, s)
+                        if alert_info:
+                            await broadcast_ws({
+                                "type": "AI_BREAKOUT_ALERT",
+                                "data": json_sanitize(alert_info)
+                            })
+                    except Exception as alert_err:
+                        print(f"[Alert Dispatch error] {alert_err}")
+
+                    signals.append({
+                        "symbol": s["symbol"],
+                        "name": s.get("name") or s["symbol"].replace(".NS", ""),
+                        "action": sg["side"],
+                        "confidence": 100,
+                        "stop_loss": sg["sl"],
+                        "target_1": sg["tp"],
+                        "qty": sg.get("qty", 1),
+                        "price": s["price"],
+                        "reasons": [f"Breakout of {s['state']} range on 5m"],
+                        "macro_trend": "NEUTRAL",
+                        "exhaustion_ratio": 0.0,
+                    })
+                if signals:
+                    ai_executed = await asyncio.to_thread(paper_trading.ai_autonomous_trade_step, signals, LATEST_PRICES)
+                    if ai_executed:
+                        await broadcast_ws({"type": "AI_AUTO_TRADE_EXECUTED", "data": ai_executed})
         except Exception as e:
             print(f"[Background Scanner] error: {e}")
             await asyncio.sleep(10)
@@ -1487,6 +1520,39 @@ def remove_from_watchlist(symbol: str):
     CURRENT_WATCHLIST = [s for s in CURRENT_WATCHLIST if s["symbol"] != clean and s["symbol"] != f"{clean}.NS"]
     return {"success": True, "message": f"Removed {symbol} from watchlist"}
 
+
+# =============================================================================
+# Push Notification & Auto-Scan Alert APIs
+# =============================================================================
+@app.get("/api/alerts/settings")
+def api_get_alert_settings():
+    """Get active push notification and auto-scan alert settings."""
+    return {"success": True, "settings": get_alert_settings()}
+
+
+@app.post("/api/alerts/settings")
+def api_update_alert_settings(req: AlertSettingsRequest):
+    """Update push notification and auto-scan alert settings."""
+    updated = update_alert_settings(req.dict())
+    return {"success": True, "settings": updated, "message": "Alert settings updated successfully"}
+
+
+@app.post("/api/alerts/test")
+def api_send_test_alert(req: Optional[TestAlertRequest] = None):
+    """
+    Trigger an instant high-priority test push notification to verify phone
+    rings loudly even when screen is locked or app is closed.
+    """
+    target_topic = req.topic if req and req.topic else None
+    res = send_test_alert(topic=target_topic)
+    return res
+
+
+@app.get("/api/alerts/history")
+def api_get_alert_history():
+    """Retrieve history of recently dispatched breakout alerts."""
+    history = get_alert_history(limit=50)
+    return {"success": True, "alerts": history}
 
 
 @app.on_event("startup")

@@ -239,3 +239,12 @@ RISK_PER_TRADE_RS = 1000.0       # max loss per trade (qty = risk / risk_per_sha
 ENTRY_CUTOFF_HHMM = (15, 10)     # no new entries after 15:10 IST
 EOD_EXIT_HHMM = (15, 15)         # force exit at 15:15 IST
 COST_RATE_ROUNDTRIP = 0.0012     # approx charges + slippage on turnover (VERIFY with broker calculator)
+
+# ===================== Push Notification & Auto-Alert Engine =====================
+NTFY_DEFAULT_TOPIC = os.getenv("NTFY_TOPIC", "stockai_jatot_alerts")
+NTFY_SERVER_URL = os.getenv("NTFY_SERVER_URL", "https://ntfy.sh")
+ALERT_AUTO_SCAN_ENABLED = True
+ALERT_COOLDOWN_SECONDS = 900     # 15 minutes cooldown per symbol to avoid spam
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+APP_PUBLIC_URL = os.getenv("APP_PUBLIC_URL", "http://15.206.37.199:8000")

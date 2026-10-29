@@ -357,6 +357,26 @@
         </div>
       </div>
 
+      <!-- 🔔 24/7 AI Auto-Scanner & Mobile Loud Alert Bar -->
+      <div id="ai-alert-notification-bar" style="background:linear-gradient(135deg, rgba(249,115,22,0.12), rgba(234,88,12,0.06)); border:1px solid rgba(249,115,22,0.38); border-radius:12px; padding:10px 14px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span style="font-size:1.15rem;">🔔</span>
+            <span style="font-weight:800; font-size:0.88rem; color:#f97316;">AI Auto-Scanner & Mobile Alert:</span>
+            <span class="live-badge-stream" style="background:rgba(249,115,22,0.18); color:#f97316; border-color:rgba(249,115,22,0.4);"><span class="dot" style="background:#f97316;"></span>SCANNING ON</span>
+          </div>
+          <span style="font-size:0.75rem; color:#d1d5db;">మొబైల్ స్క్రీన్ OFF లో ఉన్నా.. యాప్ CLOSE లో ఉన్నా లౌడ్ అలర్ట్ వస్తుంది!</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <button class="btn btn-sm btn-outline" id="btn-test-alert-sound" onclick="testAlertSirenSound()" style="font-size:0.74rem; padding:5px 12px; color:#fbbf24; border-color:rgba(251,191,36,0.4); font-weight:700;">
+            🔊 Test Siren Sound
+          </button>
+          <button class="btn btn-sm btn-outline" id="btn-test-mobile-push" onclick="testMobilePushAlert()" style="font-size:0.74rem; padding:5px 12px; color:#38bdf8; border-color:rgba(56,189,248,0.4); font-weight:700;">
+            📲 Test Phone Push
+          </button>
+        </div>
+      </div>
+
       <!-- Autonomous AI Auto-Trader Action Bar -->
       <div style="background:linear-gradient(135deg, rgba(16,185,129,0.1), rgba(6,182,212,0.06)); border:1px solid rgba(16,185,129,0.35); border-radius:12px; padding:10px 14px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -625,6 +645,93 @@
         <button class="btn btn-primary" style="width:100%; font-size:0.85rem;" onclick="saveAngelConfig()">⚡ Authenticate & Connect Angel One</button>
       </div>
 
+      <!-- 🔔 Auto-Scan & Mobile Push Alert Settings Card -->
+      <div class="trade-ticket-card" id="card-alert-settings">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <div style="font-weight:700; font-size:1rem; color:#f97316;">🔔 Auto-Scan & Mobile Push Alert Settings (లౌడ్ అలర్ట్ సెట్టింగ్స్)</div>
+          <span id="alert-status-badge" style="font-size:0.75rem; padding:3px 8px; border-radius:12px; background:rgba(249,115,22,0.15); color:#f97316; border:1px solid rgba(249,115,22,0.3); font-weight:700;">🟢 ACTIVE</span>
+        </div>
+        <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px;">
+          AI బోట్ మార్కెట్ ఓపెన్ ఉన్నప్పుడు నిరంతరం ఆటో-స్కాన్ చేస్తుంది. సరైన బ్రేక్ అవుట్ స్టాక్ దొరికిన వెంటనే మీ మొబైల్ ఫోన్‌కి లౌడ్ అలర్ట్ సౌండ్‌తో నోటిఫికేషన్ పంపుతుంది.
+        </p>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-bottom:12px;">
+          <div>
+            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">Mobile Push Topic (ntfy.sh)</label>
+            <input type="text" id="alert-ntfy-topic" value="stockai_jatot_alerts" placeholder="e.g. stockai_jatot_alerts" style="width:100%; padding:8px 12px; background:var(--bg-surface); border:1px solid var(--border-color); color:white; border-radius:6px; font-family:var(--font-mono); font-size:0.82rem;">
+          </div>
+          <div>
+            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">Anti-Spam Cooldown (Minutes)</label>
+            <input type="number" id="alert-cooldown-mins" value="15" min="1" max="60" style="width:100%; padding:8px 12px; background:var(--bg-surface); border:1px solid var(--border-color); color:white; border-radius:6px; font-family:var(--font-mono); font-size:0.82rem;">
+          </div>
+        </div>
+
+        <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:14px; background:rgba(255,255,255,0.03); padding:10px 14px; border-radius:8px; border:1px solid rgba(255,255,255,0.06);">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.82rem; font-weight:700; color:#fff;">
+            <input type="checkbox" id="check-alert-auto-scan" checked> 🤖 Background Auto-Scan Enabled
+          </label>
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.82rem; font-weight:700; color:#fff;">
+            <input type="checkbox" id="check-alert-sound" checked> 🔊 In-App Loud Alert Siren
+          </label>
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.82rem; font-weight:700; color:#fff;">
+            <input type="checkbox" id="check-alert-push" checked> 📲 Mobile Push Notifications
+          </label>
+        </div>
+
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+          <button class="btn btn-primary btn-sm" onclick="saveAlertSettings()" style="font-size:0.82rem; padding:8px 16px;">
+            💾 Save Alert Settings
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="testAlertSirenSound()" style="font-size:0.82rem; padding:8px 14px; color:#fbbf24; border-color:rgba(251,191,36,0.4);">
+            🔊 Test Loud Siren
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="testMobilePushAlert()" style="font-size:0.82rem; padding:8px 14px; color:#38bdf8; border-color:rgba(56,189,248,0.4);">
+            📲 Test Phone Notification (Urgent)
+          </button>
+        </div>
+
+        <!-- Telugu & English Mobile Setup Guide -->
+        <div class="alert-guide-box">
+          <h4>📲 మొబైల్ స్క్రీన్ OFF లో ఉన్నా.. యాప్ CLOSE లో ఉన్నా లౌడ్ అలర్ట్ సౌండ్ రావడానికి (కేవలం 1 నిమిషం సెటప్):</h4>
+          <ol>
+            <li>మీ ఆండ్రాయిడ్ ఫోన్‌లో <strong>Google Play Store</strong> ఓపెన్ చేసి ఉచిత <strong>ntfy</strong> యాప్‌ను ఇన్‌స్టాల్ చేసుకోండి (<a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" style="color:#38bdf8; text-decoration:underline;">Play Store Link</a>).</li>
+            <li>ntfy యాప్ ఓపెన్ చేసి కుడివైపు కింద ఉన్న <strong>+ (Subscribe)</strong> బటన్ నొక్కండి.</li>
+            <li>టాపిక్ పేరు వద్ద <code style="color:#fbbf24; font-weight:800; background:rgba(0,0,0,0.4); padding:2px 6px; border-radius:4px;">stockai_jatot_alerts</code> అని టైప్ చేసి <strong>Subscribe</strong> నొక్కండి.</li>
+            <li>ntfy యాప్‌లో ఆ ఛానల్ సెట్టింగ్స్‌కి వెళ్లి <strong>Notification Sound</strong> ను <strong>Alarm / Loud Ringtone</strong> కు సెట్ చేయండి.</li>
+            <li>ఇప్పుడు పైన ఉన్న <strong>[📲 Test Phone Notification]</strong> బటన్ నొక్కండి - మీ ఫోన్ స్క్రీన్ ఆఫ్ లో ఉన్నా వెంటనే లౌడ్ సౌండ్ తో స్క్రీన్ ఆన్ అయి అలర్ట్ వస్తుంది! 🚀</li>
+          </ol>
+          <div style="font-size:0.75rem; color:#94a3b8; margin-top:6px;">
+            💡 <em>గమనిక: అలర్ట్ రాగానే నోటిఫికేషన్ మీద నొక్కితే నేరుగా StockAI యాప్ ఓపెన్ అయి AI Trade Setup చూపిస్తుంది!</em>
+          </div>
+        </div>
+
+        <!-- Recent Dispatched Alerts History -->
+        <div style="margin-top:16px;">
+          <div style="font-weight:700; font-size:0.88rem; margin-bottom:8px; color:var(--text-secondary); display:flex; justify-content:space-between; align-items:center;">
+            <span>📋 ఇటీవల పంపబడిన బ్రేక్‌అవుట్ అలర్ట్‌లు (Recent Alerts Log)</span>
+            <button class="btn btn-outline btn-sm" onclick="loadAlertHistory()" style="font-size:0.7rem; padding:2px 8px;">🔄 Refresh</button>
+          </div>
+          <div style="overflow-x:auto;">
+            <table class="data-table" style="font-size:0.76rem; width:100%;">
+              <thead>
+                <tr>
+                  <th>సమయం</th>
+                  <th>స్టాక్</th>
+                  <th>యాక్షన్</th>
+                  <th>ఎంట్రీ ధర</th>
+                  <th>స్టాప్‌లాస్ (SL)</th>
+                  <th>టార్గెట్ (TP)</th>
+                  <th>ఛానల్</th>
+                </tr>
+              </thead>
+              <tbody id="alert-history-table-body">
+                <tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:10px;">నోటిఫికేషన్లు లోడ్ అవుతున్నాయి...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <!-- Watchlist Management Card -->
       <div class="trade-ticket-card">
         <div style="font-weight:700; font-size:1rem; margin-bottom:10px;">Add Custom Indian Stock Symbol</div>
@@ -872,6 +979,9 @@
 
   <!-- Toast Container -->
   <div class="toast-container" id="toast-container"></div>
+
+  <!-- 🚨 Urgent Breakout Emergency Floating Banner -->
+  <div id="ai-breakout-emergency-banner" style="display:none;"></div>
 
   <!-- Scripts -->
   <script src="js/charts.js" defer></script>

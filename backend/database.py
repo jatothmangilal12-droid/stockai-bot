@@ -162,6 +162,46 @@ def init_db():
     )
     """)
 
+    # Alert & Push Notification Settings Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS alert_settings (
+        id INTEGER PRIMARY KEY DEFAULT 1,
+        ntfy_topic TEXT DEFAULT 'stockai_jatot_alerts',
+        ntfy_enabled INTEGER DEFAULT 1,
+        telegram_token TEXT DEFAULT '',
+        telegram_chat_id TEXT DEFAULT '',
+        telegram_enabled INTEGER DEFAULT 0,
+        sound_enabled INTEGER DEFAULT 1,
+        auto_scan_enabled INTEGER DEFAULT 1,
+        cooldown_minutes INTEGER DEFAULT 15,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cursor.execute("SELECT COUNT(*) FROM alert_settings WHERE id = 1")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("""
+        INSERT INTO alert_settings (id, ntfy_topic, ntfy_enabled, sound_enabled, auto_scan_enabled, cooldown_minutes)
+        VALUES (1, 'stockai_jatot_alerts', 1, 1, 1, 15)
+        """)
+
+    # Alert Notification History Log Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS alert_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        side TEXT NOT NULL,
+        price REAL NOT NULL,
+        stop_loss REAL,
+        target_price REAL,
+        channel TEXT DEFAULT 'ALL',
+        title TEXT,
+        message TEXT,
+        status TEXT DEFAULT 'SENT',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     cursor.execute("PRAGMA table_info(positions)")
     existing_cols = [c[1] for c in cursor.fetchall()]
     if "trade_type" not in existing_cols:

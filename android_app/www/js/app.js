@@ -416,6 +416,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initServerConfigUI();
   loadAngelStatus();
   fetchAngelDematHoldings();
+  loadAlertSettings();
+  loadAlertHistory();
   startContinuousLiveMarketEngine();
 
   // Register Service Worker for PWA (web only)
@@ -4877,6 +4879,8 @@ function initWebSocket() {
           loadPortfolio();
         } else if (msg.type === 'FLASH_NEWS_ALERT') {
           showBreakingNewsPopup(msg.data);
+        } else if (msg.type === 'AI_BREAKOUT_ALERT') {
+          handleIncomingBreakoutAlert(msg.data);
         }
       } catch (e) {}
     };
@@ -5143,3 +5147,323 @@ setInterval(async () => {
     }
   } catch (e) {}
 }, 30000);
+
+// ==========================================================================
+// 🔔 Institutional High-Priority Audio Siren & Mobile Alert System
+// ==========================================================================
+let _alertAudioCtx = null;
+let _alertSettingsCache = {
+  ntfy_topic: "stockai_jatot_alerts",
+  ntfy_enabled: true,
+  sound_enabled: true,
+  auto_scan_enabled: true,
+  cooldown_minutes: 15
+};
+
+function getAudioContext() {
+  if (!_alertAudioCtx) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (AudioContextClass) {
+      _alertAudioCtx = new AudioContextClass();
+    }
+  }
+  if (_alertAudioCtx && _alertAudioCtx.state === 'suspended') {
+    _alertAudioCtx.resume();
+  }
+  return _alertAudioCtx;
+}
+
+// User-gesture unlock for AudioContext & notification permission
+['click', 'touchstart', 'keydown'].forEach(evt => {
+  window.addEventListener(evt, () => {
+    try {
+      const ctx = getAudioContext();
+      if (ctx && ctx.state === 'suspended') ctx.resume();
+      if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+      }
+    } catch (e) {}
+  }, { once: true, passive: true });
+});
+
+function playInstitutionalAlertSiren() {
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'sawtooth';
+
+    // 3 sharp, penetrating urgent alert pulses (960Hz -> 1440Hz -> 960Hz)
+    const pulseCount = 3;
+    const pulseDur = 0.35;
+    for (let i = 0; i < pulseCount; i++) {
+      const t = now + i * pulseDur;
+      osc.frequency.setValueAtTime(960, t);
+      osc.frequency.exponentialRampToValueAtTime(1440, t + 0.15);
+      osc.frequency.setValueAtTime(960, t + 0.25);
+
+      gain.gain.setValueAtTime(0.01, t);
+      gain.gain.linearRampToValueAtTime(1.0, t + 0.05);
+      gain.gain.linearRampToValueAtTime(0.01, t + 0.30);
+    }
+
+    gain.gain.setValueAtTime(0.0, now + pulseCount * pulseDur);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + pulseCount * pulseDur + 0.05);
+
+    // Mobile vibration pattern
+    if ('vibrate' in navigator) {
+      navigator.vibrate([300, 100, 300, 100, 500]);
+    }
+  } catch (err) {
+    console.warn('[Audio Siren Error]', err);
+  }
+}
+
+function testAlertSirenSound() {
+  try {
+    const ctx = getAudioContext();
+    if (ctx && ctx.state === 'suspended') {
+      ctx.resume().then(() => playInstitutionalAlertSiren());
+    } else {
+      playInstitutionalAlertSiren();
+    }
+    showToast('🔊 Playing Institutional High-Urgency Breakout Alert Siren!', 'info');
+  } catch (e) {
+    showToast('Failed to play sound: ' + e.message, 'error');
+  }
+}
+
+async function testMobilePushAlert() {
+  try {
+    const topic = (document.getElementById('alert-ntfy-topic')?.value || _alertSettingsCache.ntfy_topic || 'stockai_jatot_alerts').trim();
+    showToast(`📲 Sending Urgent Test Notification to topic: ${topic}...`, 'info');
+    
+    // Also play in-app sound so user hears both!
+    playInstitutionalAlertSiren();
+
+    const res = await fetch(`${API_BASE}/api/alerts/test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: topic })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`✅ Urgent Push Alert sent! Check your phone (priority: max)`, 'success');
+      loadAlertHistory();
+    } else {
+      showToast(`Push failed: ${data.message || data.error}`, 'error');
+    }
+  } catch (err) {
+    showToast(`Network error: ${err.message}`, 'error');
+  }
+}
+
+async function loadAlertSettings() {
+  try {
+    const res = await fetch(`${API_BASE}/api/alerts/settings`);
+    if (!res.ok) return;
+    const json = await res.json();
+    if (json.success && json.settings) {
+      _alertSettingsCache = json.settings;
+      const topicInput = document.getElementById('alert-ntfy-topic');
+      if (topicInput) topicInput.value = json.settings.ntfy_topic || 'stockai_jatot_alerts';
+      
+      const coolInput = document.getElementById('alert-cooldown-mins');
+      if (coolInput) coolInput.value = json.settings.cooldown_minutes || 15;
+
+      const autoScan = document.getElementById('check-alert-auto-scan');
+      if (autoScan) autoScan.checked = !!json.settings.auto_scan_enabled;
+
+      const sound = document.getElementById('check-alert-sound');
+      if (sound) sound.checked = !!json.settings.sound_enabled;
+
+      const push = document.getElementById('check-alert-push');
+      if (push) push.checked = !!json.settings.ntfy_enabled;
+    }
+  } catch (e) {}
+}
+
+async function saveAlertSettings() {
+  try {
+    const topic = (document.getElementById('alert-ntfy-topic')?.value || 'stockai_jatot_alerts').trim();
+    const cool = parseInt(document.getElementById('alert-cooldown-mins')?.value || 15);
+    const autoScan = document.getElementById('check-alert-auto-scan')?.checked ?? true;
+    const sound = document.getElementById('check-alert-sound')?.checked ?? true;
+    const push = document.getElementById('check-alert-push')?.checked ?? true;
+
+    const payload = {
+      ntfy_topic: topic,
+      ntfy_enabled: push,
+      sound_enabled: sound,
+      auto_scan_enabled: autoScan,
+      cooldown_minutes: cool
+    };
+
+    const res = await fetch(`${API_BASE}/api/alerts/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.success) {
+      _alertSettingsCache = data.settings;
+      showToast('✅ Alert settings saved successfully!', 'success');
+      loadAlertHistory();
+    } else {
+      showToast('Failed to save alert settings', 'error');
+    }
+  } catch (err) {
+    showToast('Error saving settings: ' + err.message, 'error');
+  }
+}
+
+async function loadAlertHistory() {
+  try {
+    const tbody = document.getElementById('alert-history-table-body');
+    if (!tbody) return;
+
+    const res = await fetch(`${API_BASE}/api/alerts/history`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.success || !data.alerts || data.alerts.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:10px;">ఇంకా ఎటువంటి అలర్ట్‌లు పంపబడలేదు (మార్కెట్ ఓపెన్ ఉన్నప్పుడు ఆటో-స్కాన్ రన్ అవుతుంది).</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = data.alerts.map(a => {
+      const isBuy = a.side === 'BUY';
+      const color = isBuy ? '#10b981' : '#ef4444';
+      const cleanSym = (a.symbol || '').replace('.NS', '');
+      const timeStr = a.created_at ? a.created_at.slice(11, 16) : '--:--';
+      return `
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+          <td style="color:var(--text-muted); font-family:var(--font-mono);">${timeStr}</td>
+          <td style="font-weight:800; color:#fff;">${cleanSym}</td>
+          <td><span style="font-weight:800; color:${color}; background:rgba(${isBuy?'16,185,129':'239,68,68'},0.15); padding:2px 6px; border-radius:4px;">${a.side}</span></td>
+          <td style="font-family:var(--font-mono); color:#fff; font-weight:700;">₹${Number(a.price||0).toFixed(2)}</td>
+          <td style="font-family:var(--font-mono); color:#ef4444;">₹${a.stop_loss ? Number(a.stop_loss).toFixed(2) : '-'}</td>
+          <td style="font-family:var(--font-mono); color:#10b981;">₹${a.target_price ? Number(a.target_price).toFixed(2) : '-'}</td>
+          <td><span class="badge" style="font-size:0.68rem; background:rgba(56,189,248,0.15); color:#38bdf8;">${a.channel || 'NTFY'}</span></td>
+        </tr>
+      `;
+    }).join('');
+  } catch (e) {}
+}
+
+function handleIncomingBreakoutAlert(data) {
+  if (!data) return;
+  const symbol = (data.symbol || '').replace('.NS', '');
+  const side = (data.side || 'BUY').toUpperCase();
+  const price = Number(data.price || 0);
+  const sl = Number(data.stop_loss || 0);
+  const tp = Number(data.target_price || 0);
+  const isBuy = side === 'BUY';
+  const color = isBuy ? '#10b981' : '#ef4444';
+
+  // 1. Play Loud Audio Siren if enabled
+  if (_alertSettingsCache.sound_enabled) {
+    playInstitutionalAlertSiren();
+  }
+
+  // 2. HTML5 System Desktop/Mobile Notification
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try {
+      const notifTitle = `🚨 AI BREAKOUT ALERT: ${symbol} (${side})`;
+      const notifBody = `${symbol} 5m Breakout at ₹${price.toFixed(2)}! SL: ₹${sl.toFixed(2)} | Target: ₹${tp.toFixed(2)}`;
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.ready.then(reg => {
+          reg.showNotification(notifTitle, {
+            body: notifBody,
+            icon: '/assets/icon.png',
+            badge: '/favicon.png',
+            vibrate: [300, 100, 300, 100, 500],
+            tag: `alert-${symbol}`,
+            renotify: true,
+            requireInteraction: true,
+            data: '/#view-trading'
+          });
+        });
+      } else {
+        new Notification(notifTitle, {
+          body: notifBody,
+          icon: '/assets/icon.png',
+          vibrate: [300, 100, 300, 100, 500]
+        });
+      }
+    } catch (err) {}
+  }
+
+  // 3. Display High-Urgency Floating Emergency Banner at Top
+  const banner = document.getElementById('ai-breakout-emergency-banner');
+  if (banner) {
+    banner.className = 'breakout-emergency-banner';
+    banner.style.display = 'flex';
+    banner.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:1.6rem;">🚨</span>
+          <div>
+            <div style="font-weight:900; font-size:1.05rem; letter-spacing:0.5px;">AI BREAKOUT SNIPER ALERT DETECTED!</div>
+            <div style="font-size:0.75rem; opacity:0.9;">60m Compression Squeeze Breakout with 1.8x Institutional Volume</div>
+          </div>
+        </div>
+        <button onclick="document.getElementById('ai-breakout-emergency-banner').style.display='none'" style="background:transparent; border:none; color:white; font-size:1.2rem; cursor:pointer; padding:0 4px;">✕</button>
+      </div>
+
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:8px; background:rgba(0,0,0,0.3); padding:8px 12px; border-radius:8px;">
+        <div><span style="font-size:0.7rem; opacity:0.8;">Stock:</span> <strong style="font-size:0.95rem; color:#fff;">${symbol}</strong></div>
+        <div><span style="font-size:0.7rem; opacity:0.8;">Action:</span> <strong style="font-size:0.95rem; color:#fef08a;">${side}</strong></div>
+        <div><span style="font-size:0.7rem; opacity:0.8;">Entry CMP:</span> <strong style="font-size:0.95rem; color:#fff;">₹${price.toFixed(2)}</strong></div>
+        <div><span style="font-size:0.7rem; opacity:0.8;">Stop Loss:</span> <strong style="font-size:0.95rem; color:#fca5a5;">₹${sl.toFixed(2)}</strong></div>
+        <div><span style="font-size:0.7rem; opacity:0.8;">Target (2R):</span> <strong style="font-size:0.95rem; color:#86efac;">₹${tp.toFixed(2)}</strong></div>
+      </div>
+
+      <div style="display:flex; gap:10px; justify-content:flex-end; align-items:center;">
+        <button class="btn btn-sm btn-outline" onclick="document.getElementById('ai-breakout-emergency-banner').style.display='none'" style="color:#fff; border-color:rgba(255,255,255,0.4); font-size:0.78rem;">
+          Dismiss
+        </button>
+        <button class="btn btn-sm" onclick="navigateToAiTradeAndPlan()" style="background:#fff; color:#b45309; font-weight:900; font-size:0.82rem; padding:6px 14px; box-shadow:0 0 15px rgba(255,255,255,0.5);">
+          ⚡ Open AI Trade Setup & Execute
+        </button>
+      </div>
+    `;
+
+    // Auto-dismiss banner after 25 seconds if not clicked
+    setTimeout(() => {
+      if (banner && banner.style.display !== 'none') {
+        banner.style.display = 'none';
+      }
+    }, 25000);
+  }
+
+  showToast(`🚨 AI BREAKOUT ALERT: ${symbol} (${side}) at ₹${price.toFixed(2)}!`, 'success');
+  loadAlertHistory();
+}
+
+function navigateToAiTradeAndPlan() {
+  const banner = document.getElementById('ai-breakout-emergency-banner');
+  if (banner) banner.style.display = 'none';
+  
+  // Switch to trading tab
+  if (typeof switchView === 'function') {
+    switchView('view-trading');
+  } else {
+    location.hash = '#view-trading';
+  }
+
+  // Scroll to AI trade action bar and trigger live scan
+  setTimeout(() => {
+    const el = document.getElementById('ai-alert-notification-bar');
+    if (el) el.scrollIntoView({ behavior: 'smooth' });
+    triggerAiAutoTradeNow();
+  }, 300);
+}
