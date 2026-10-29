@@ -142,6 +142,18 @@ class AngelOcoManager:
         if calc_price > 0 and (calc_price * quantity) > 100000.0:
             return {"status": False, "message": f"Order value ₹{calc_price * quantity:,.2f} exceeds max server limit of ₹1,00,000.00."}
 
+        # Check Angel One Available Margin (5x MIS Upfront Margin Guard)
+        if calc_price > 0:
+            rms_info = angel_client.get_rms()
+            if rms_info.get("status"):
+                avail = float(rms_info.get("available_cash") or rms_info.get("net") or 0.0)
+                needed = (calc_price * quantity) / 5.0
+                if avail > 0 and needed > (avail + 10.0):
+                    return {
+                        "status": False,
+                        "message": f"Insufficient Angel One Funds: Need ₹{needed:,.2f} margin (5x MIS for {quantity} shs of {clean_sym}), but available cash is ₹{avail:,.2f}."
+                    }
+
         # 4. Authentication Check
         if not angel_client.is_authenticated:
             ok, msg = angel_client.login()
@@ -626,29 +638,23 @@ class AngelOcoManager:
         return True
 
     def _send_broker_order(self, angel_client, payload: dict) -> dict:
-        """Helper to send order request to Angel One SmartAPI."""
-        headers = angel_client._get_headers()
-        try:
-            req = urllib.request.Request(
-                "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/placeOrder",
-                data=json.dumps(payload).encode("utf-8"),
-                headers=headers,
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=7) as response:
-                res = json.loads(response.read().decode("utf-8"))
-                if res.get("status") or res.get("success"):
-                    d = res.get("data")
-                    oid = d.get("orderid") if isinstance(d, dict) else (d or "CONFIRMED")
-                    return {"status": True, "order_id": str(oid), "data": d}
-                else:
-                    return {
-                        "status": False,
-                        "message": res.get("message", "Order rejected by broker"),
-                        "error_code": res.get("errorcode", "")
-                    }
-        except Exception as e:
-            return {"status": False, "message": str(e)}
+        """Helper to send order request to Angel One SmartAPI with auto token recovery."""
+        res = angel_client._execute_smartapi_call(
+            "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/placeOrder",
+            payload=payload,
+            method="POST",
+            timeout=7.0
+        )
+        if res.get("status") or res.get("success"):
+            d = res.get("data")
+            oid = d.get("orderid") if isinstance(d, dict) else (d or "CONFIRMED")
+            return {"status": True, "order_id": str(oid), "data": d}
+        else:
+            return {
+                "status": False,
+                "message": res.get("message", "Order rejected by broker"),
+                "error_code": res.get("errorcode", "")
+            }
 
     def _record_order_db(self, **kwargs):
         """Insert order record into SQLite database."""

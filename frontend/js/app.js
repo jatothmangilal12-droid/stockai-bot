@@ -8,7 +8,11 @@ function getApiBase() {
   let saved = localStorage.getItem('stockai_server_url');
   if (saved) {
     saved = saved.trim().replace(/\/+$/, '');
-    if (!saved.startsWith('http://') && !saved.startsWith('https://')) {
+    // Clean out any old local Wi-Fi IP and point directly to AWS Cloud
+    if (saved.includes('192.168.29.28') || saved.includes('192.168.')) {
+      saved = 'http://15.206.37.199:8000';
+      localStorage.setItem('stockai_server_url', saved);
+    } else if (!saved.startsWith('http://') && !saved.startsWith('https://')) {
       saved = 'http://' + saved;
     }
     return saved;

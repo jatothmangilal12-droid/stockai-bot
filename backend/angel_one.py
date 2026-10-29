@@ -14,6 +14,7 @@ import time
 import urllib.request
 from datetime import datetime
 from typing import Optional
+from backend.database import get_connection
 
 # SmartAPI official endpoints
 SMARTAPI_BASE = "https://apiconnect.angelone.in"
@@ -172,16 +173,28 @@ class AngelOneClient:
     """Manages SmartAPI session and live NSE data retrieval."""
 
     def __init__(self, api_key: str = "", client_code: str = "", password: str = "", totp_secret: str = ""):
-        self.api_key = api_key or os.getenv("ANGELONE_API_KEY", "KLcQJzrD")
-        self.client_code = client_code or os.getenv("ANGELONE_CLIENT_CODE", "M207216")
-        self.password = password or os.getenv("ANGELONE_PASSWORD", "1995")
-        self.totp_secret = totp_secret or os.getenv("ANGELONE_TOTP_SECRET", "JXDOER6HYCVKM2HYRLRASLAFUM")
+        db_settings = {}
+        try:
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT key, value FROM settings WHERE key LIKE 'angel_%'")
+            for row in cur.fetchall():
+                db_settings[row["key"]] = row["value"]
+            conn.close()
+        except Exception:
+            pass
+
+        self.api_key = api_key or db_settings.get("angel_api_key") or os.getenv("ANGELONE_API_KEY", "KLcQJzrD")
+        self.client_code = client_code or db_settings.get("angel_client_code") or os.getenv("ANGELONE_CLIENT_CODE", "M207216")
+        self.password = password or db_settings.get("angel_password") or os.getenv("ANGELONE_PASSWORD", "1995")
+        self.totp_secret = totp_secret or db_settings.get("angel_totp_secret") or os.getenv("ANGELONE_TOTP_SECRET", "JXDOER6HYCVKM2HYRLRASLAFUM")
         self.jwt_token: Optional[str] = None
         self.feed_token: Optional[str] = None
         self.refresh_token: Optional[str] = None
         self.is_authenticated = False
         self._cached_public_ip: Optional[str] = None
         self._cached_local_ip: Optional[str] = None
+        self.token_created_at: float = 0.0
 
     def _get_local_ip(self) -> str:
         if self._cached_local_ip:
@@ -241,7 +254,8 @@ class AngelOneClient:
 
         with _LOGIN_LOCK:
             if not force and self.is_authenticated and self.jwt_token:
-                return True, "Already authenticated."
+                if (time.time() - self.token_created_at) < 36000:
+                    return True, "Already authenticated."
 
             totp_raw = self.totp_secret.replace(" ", "").strip()
             if len(totp_raw) == 6 and totp_raw.isdigit():
@@ -275,6 +289,7 @@ class AngelOneClient:
                         self.feed_token = data.get("feedToken")
                         self.refresh_token = data.get("refreshToken")
                         self.is_authenticated = True
+                        self.token_created_at = time.time()
                         print(f"[SmartAPI] Successfully logged in to Angel One for client {self.client_code}!")
                         return True, "Connected to Angel One SmartAPI successfully!"
                     else:
@@ -292,6 +307,59 @@ class AngelOneClient:
             except Exception as e:
                 print(f"[SmartAPI] Login network error: {e}")
                 return False, f"Network error connecting to Angel One: {e}"
+
+    def _is_token_error(self, err_code: str, message: str) -> bool:
+        """Detect Angel One JWT expiration or authorization error codes."""
+        code = str(err_code or "").strip().upper()
+        msg = str(message or "").lower()
+        if code in ("AG8001", "AG8002", "AG8003", "AB1004", "AB1005", "AG8004"):
+            return True
+        if any(w in msg for w in ("invalid token", "token is invalid", "token expired", "jwt", "session expired", "unauthorized")):
+            return True
+        return False
+
+    def _execute_smartapi_call(self, endpoint: str, payload: Optional[dict] = None, method: str = "POST", timeout: float = 6.0) -> dict:
+        """
+        Robust authenticated SmartAPI HTTP dispatcher with automatic transparent token auto-recovery.
+        Guarantees that token expirations never freeze live quotes or fail orders.
+        """
+        if not self.is_authenticated or (time.time() - self.token_created_at > 36000):
+            ok, msg = self.login(force=True)
+            if not ok:
+                return {"status": False, "message": f"Angel One authentication failed: {msg}"}
+
+        data_bytes = json.dumps(payload).encode("utf-8") if payload is not None else None
+
+        for attempt in range(2):
+            headers = self._get_headers()
+            try:
+                req = urllib.request.Request(endpoint, data=data_bytes, headers=headers, method=method)
+                with urllib.request.urlopen(req, timeout=timeout) as response:
+                    res = json.loads(response.read().decode("utf-8"))
+                    err_code = str(res.get("errorcode") or "")
+                    msg = str(res.get("message") or "")
+                    if self._is_token_error(err_code, msg):
+                        if attempt == 0:
+                            print(f"[SmartAPI Auto-Recover] Token expired ({err_code}: {msg}). Silently re-authenticating...")
+                            re_ok, _ = self.login(force=True)
+                            if re_ok:
+                                continue
+                    return res
+            except urllib.error.HTTPError as e:
+                if e.code == 401 and attempt == 0:
+                    print("[SmartAPI Auto-Recover] HTTP 401 Unauthorized. Refreshing token and retrying...")
+                    re_ok, _ = self.login(force=True)
+                    if re_ok:
+                        continue
+                try:
+                    err_body = json.loads(e.read().decode("utf-8"))
+                    return err_body
+                except Exception:
+                    return {"status": False, "message": f"HTTP Error {e.code}: {e.reason}"}
+            except Exception as e:
+                return {"status": False, "message": str(e)}
+
+        return {"status": False, "message": "SmartAPI session expired and auto-recovery failed."}
 
     def _resolve_token(self, symbol: str) -> Optional[str]:
         """Resolve token from symbol regardless of .NS suffix, aliases, or formatting."""
@@ -315,17 +383,10 @@ class AngelOneClient:
         return aliases.get(clean)
 
     def get_live_quote(self, symbol: str) -> Optional[dict]:
-        """Fetch real-time snapshot quote from SmartAPI for given stock."""
+        """Fetch real-time snapshot quote from SmartAPI for given stock with auto-recovery."""
         token = self._resolve_token(symbol)
         if not token:
             return None
-
-        if not self.is_authenticated:
-            ok, _ = self.login()
-            if not ok:
-                return None
-
-        headers = self._get_headers()
 
         payload = {
             "mode": "FULL",
@@ -334,41 +395,26 @@ class AngelOneClient:
             }
         }
 
-        try:
-            req = urllib.request.Request(
-                QUOTE_ENDPOINT,
-                data=json.dumps(payload).encode("utf-8"),
-                headers=headers,
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=5) as response:
-                res = json.loads(response.read().decode("utf-8"))
-                if res.get("status") and "data" in res:
-                    fetched = res["data"].get("fetched", [])
-                    if fetched:
-                        item = fetched[0]
-                        ltp = float(item.get("ltp", 0.0))
-                        pct = float(item.get("percentChange", 0.0))
-                        return {
-                            "price": ltp,
-                            "symbol": symbol,
-                            "percent_change": pct,
-                            "high": float(item.get("high", 0.0)),
-                            "low": float(item.get("low", 0.0)),
-                            "volume": int(item.get("tradeVolume", 0)),
-                            "source": "AngelOne"
-                        }
-        except Exception as e:
-            print(f"[SmartAPI] Quote fetch error for {symbol}: {e}")
+        res = self._execute_smartapi_call(QUOTE_ENDPOINT, payload=payload, method="POST", timeout=5.0)
+        if res.get("status") and "data" in res:
+            fetched = res["data"].get("fetched", [])
+            if fetched:
+                item = fetched[0]
+                ltp = float(item.get("ltp", 0.0))
+                pct = float(item.get("percentChange", 0.0))
+                return {
+                    "price": ltp,
+                    "symbol": symbol,
+                    "percent_change": pct,
+                    "high": float(item.get("high", 0.0)),
+                    "low": float(item.get("low", 0.0)),
+                    "volume": int(item.get("tradeVolume", 0)),
+                    "source": "AngelOne"
+                }
         return None
 
     def get_batch_quotes(self, symbols: list[str]) -> dict:
-        """Fetch ultra-fast batch quotes for multiple NSE symbols in single API request."""
-        if not self.is_authenticated:
-            ok, _ = self.login()
-            if not ok:
-                return {}
-
+        """Fetch ultra-fast batch quotes for multiple NSE symbols in single API request with auto-recovery."""
         token_to_sym = {}
         for s in symbols:
             tok = self._resolve_token(s)
@@ -377,8 +423,6 @@ class AngelOneClient:
 
         if not token_to_sym:
             return {}
-
-        headers = self._get_headers()
 
         tokens = list(token_to_sym.keys())[:50]
         payload = {
@@ -389,51 +433,33 @@ class AngelOneClient:
         }
 
         results = {}
-        try:
-            req = urllib.request.Request(
-                QUOTE_ENDPOINT,
-                data=json.dumps(payload).encode("utf-8"),
-                headers=headers,
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=5) as response:
-                res = json.loads(response.read().decode("utf-8"))
-                if res.get("status") and "data" in res:
-                    fetched = res["data"].get("fetched", [])
-                    for item in fetched:
-                        tok = str(item.get("symbolToken"))
-                        sym = token_to_sym.get(tok)
-                        if sym:
-                            results[sym] = {
-                                "price": float(item.get("ltp", 0.0)),
-                                "percent_change": float(item.get("percentChange", 0.0)),
-                                "open": float(item.get("open", 0.0)),
-                                "high": float(item.get("high", 0.0)),
-                                "low": float(item.get("low", 0.0)),
-                                "close": float(item.get("close", 0.0)),
-                                "volume": int(item.get("tradeVolume", 0)),
-                                "vwap": float(item.get("avgPrice", 0.0)),
-                                "tot_buy": int(item.get("totBuyQuan", 0)),
-                                "tot_sell": int(item.get("totSellQuan", 0)),
-                                "source": "AngelOne"
-                            }
-        except Exception as e:
-            print(f"[SmartAPI] Batch quote fetch error: {e}")
-
+        res = self._execute_smartapi_call(QUOTE_ENDPOINT, payload=payload, method="POST", timeout=5.0)
+        if res.get("status") and "data" in res:
+            fetched = res["data"].get("fetched", [])
+            for item in fetched:
+                tok = str(item.get("symbolToken"))
+                sym = token_to_sym.get(tok)
+                if sym:
+                    results[sym] = {
+                        "price": float(item.get("ltp", 0.0)),
+                        "percent_change": float(item.get("percentChange", 0.0)),
+                        "open": float(item.get("open", 0.0)),
+                        "high": float(item.get("high", 0.0)),
+                        "low": float(item.get("low", 0.0)),
+                        "close": float(item.get("close", 0.0)),
+                        "volume": int(item.get("tradeVolume", 0)),
+                        "vwap": float(item.get("avgPrice", 0.0)),
+                        "tot_buy": int(item.get("totBuyQuan", 0)),
+                        "tot_sell": int(item.get("totSellQuan", 0)),
+                        "source": "AngelOne"
+                    }
         return results
 
     def get_market_depth(self, symbol: str) -> dict:
-        """Fetch Level 2 Market Depth (Best 5 Bids and Asks) + Whale institutional volume ratio."""
+        """Fetch Level 2 Market Depth (Best 5 Bids and Asks) + Whale institutional volume ratio with auto-recovery."""
         token = self._resolve_token(symbol)
         if not token:
             return {"status": False, "message": f"Token not found for {symbol}"}
-
-        if not self.is_authenticated:
-            ok, msg = self.login()
-            if not ok:
-                return {"status": False, "message": f"Angel One authentication failed: {msg}"}
-
-        headers = self._get_headers()
 
         payload = {
             "mode": "FULL",
@@ -442,49 +468,41 @@ class AngelOneClient:
             }
         }
 
-        try:
-            req = urllib.request.Request(
-                QUOTE_ENDPOINT,
-                data=json.dumps(payload).encode("utf-8"),
-                headers=headers,
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=6) as response:
-                res = json.loads(response.read().decode("utf-8"))
-                if res.get("status") and "data" in res:
-                    fetched = res["data"].get("fetched", [])
-                    if fetched:
-                        item = fetched[0]
-                        depth = item.get("depth", {})
-                        bids = depth.get("buy", [])
-                        asks = depth.get("sell", [])
-                        tot_buy = float(item.get("totBuyQuan", 0.0))
-                        tot_sell = float(item.get("totSellQuan", 0.0))
-                        total_vol = tot_buy + tot_sell
+        res = self._execute_smartapi_call(QUOTE_ENDPOINT, payload=payload, method="POST", timeout=6.0)
+        if res.get("status") and "data" in res:
+            fetched = res["data"].get("fetched", [])
+            if fetched:
+                item = fetched[0]
+                depth = item.get("depth", {})
+                bids = depth.get("buy", [])
+                asks = depth.get("sell", [])
+                tot_buy = float(item.get("totBuyQuan", 0.0))
+                tot_sell = float(item.get("totSellQuan", 0.0))
+                total_vol = tot_buy + tot_sell
 
-                        buy_ratio = round((tot_buy / total_vol) * 100, 1) if total_vol > 0 else 50.0
-                        sell_ratio = round((tot_sell / total_vol) * 100, 1) if total_vol > 0 else 50.0
+                buy_ratio = round((tot_buy / total_vol) * 100, 1) if total_vol > 0 else 50.0
+                sell_ratio = round((tot_sell / total_vol) * 100, 1) if total_vol > 0 else 50.0
 
-                        # Institutional Whale Analysis
-                        if buy_ratio >= 65.0:
-                            whale_signal = "WHALE_ACCUMULATION"
-                            whale_bias = "BULLISH"
-                            whale_label = f"🐋 FII/DII Whale Accumulation ({buy_ratio}% Buy Vol)"
-                        elif sell_ratio >= 65.0:
-                            whale_signal = "WHALE_DISTRIBUTION"
-                            whale_bias = "BEARISH"
-                            whale_label = f"🚨 FII/DII Whale Dumping ({sell_ratio}% Sell Vol)"
-                        else:
-                            whale_signal = "NEUTRAL"
-                            whale_bias = "BALANCED"
-                            whale_label = f"⚖️ Balanced Order Book ({buy_ratio}% B / {sell_ratio}% S)"
+                # Institutional Whale Analysis
+                if buy_ratio >= 65.0:
+                    whale_signal = "WHALE_ACCUMULATION"
+                    whale_bias = "BULLISH"
+                    whale_label = f"🐋 FII/DII Whale Accumulation ({buy_ratio}% Buy Vol)"
+                elif sell_ratio >= 65.0:
+                    whale_signal = "WHALE_DISTRIBUTION"
+                    whale_bias = "BEARISH"
+                    whale_label = f"🚨 FII/DII Whale Dumping ({sell_ratio}% Sell Vol)"
+                else:
+                    whale_signal = "NEUTRAL"
+                    whale_bias = "BALANCED"
+                    whale_label = f"⚖️ Balanced Order Book ({buy_ratio}% B / {sell_ratio}% S)"
 
-                        big_bids = [b for b in bids if float(b.get("quantity", 0)) >= 2500]
-                        big_asks = [a for a in asks if float(a.get("quantity", 0)) >= 2500]
+                big_bids = [b for b in bids if float(b.get("quantity", 0)) >= 2500]
+                big_asks = [a for a in asks if float(a.get("quantity", 0)) >= 2500]
 
-                        return {
-                            "status": True,
-                            "symbol": symbol,
+                return {
+                    "status": True,
+                    "symbol": symbol,
                             "ltp": float(item.get("ltp", 0.0)),
                             "percent_change": float(item.get("percentChange", 0.0)),
                             "net_change": float(item.get("netChange", 0.0)),
@@ -558,53 +576,29 @@ class AngelOneClient:
         }
 
     def get_holdings(self) -> dict:
-        """Fetch user Demat CNC/Delivery holdings to track and protect existing investments."""
-        if not self.is_authenticated:
-            ok, _ = self.login()
-            if not ok:
-                return {"status": False, "message": "Broker not authenticated", "holdings": []}
-
-        headers = self._get_headers()
-
-        try:
-            req = urllib.request.Request(HOLDINGS_ENDPOINT, headers=headers, method="GET")
-            with urllib.request.urlopen(req, timeout=6) as response:
-                res = json.loads(response.read().decode("utf-8"))
-                if res.get("status") and "data" in res:
-                    holdings = res["data"].get("holdings", [])
-                    return {
-                        "status": True,
-                        "message": "Holdings fetched successfully",
-                        "holdings": holdings,
-                        "holding_symbols": [h.get("tradingsymbol", "").replace("-EQ", "") for h in holdings]
-                    }
-        except Exception as e:
-            print(f"[SmartAPI] Holdings fetch error: {e}")
-        return {"status": False, "message": "Failed to fetch holdings", "holdings": []}
+        """Fetch user Demat CNC/Delivery holdings to track and protect existing investments with auto-recovery."""
+        res = self._execute_smartapi_call(HOLDINGS_ENDPOINT, method="GET", timeout=6.0)
+        if res.get("status") and "data" in res:
+            holdings = res["data"].get("holdings", [])
+            return {
+                "status": True,
+                "message": "Holdings fetched successfully",
+                "holdings": holdings,
+                "holding_symbols": [h.get("tradingsymbol", "").replace("-EQ", "") for h in holdings]
+            }
+        return {"status": False, "message": res.get("message", "Failed to fetch holdings"), "holdings": []}
 
     def get_rms(self) -> dict:
-        """Fetch live account cash and available margin."""
-        if not self.is_authenticated:
-            ok, _ = self.login()
-            if not ok:
-                return {"status": False, "message": "Broker not authenticated", "net": 0.0}
-
-        headers = self._get_headers()
-
-        try:
-            req = urllib.request.Request(RMS_ENDPOINT, headers=headers, method="GET")
-            with urllib.request.urlopen(req, timeout=5) as response:
-                res = json.loads(response.read().decode("utf-8"))
-                if res.get("status") and "data" in res:
-                    return {
-                        "status": True,
-                        "net": float(res["data"].get("net", 0.0)),
-                        "available_cash": float(res["data"].get("availablecash", 0.0)),
-                        "collateral": float(res["data"].get("collateral", 0.0))
-                    }
-        except Exception as e:
-            print(f"[SmartAPI] RMS fetch error: {e}")
-        return {"status": False, "message": "Failed to fetch RMS funds", "net": 0.0}
+        """Fetch live account cash and available margin with auto-recovery."""
+        res = self._execute_smartapi_call(RMS_ENDPOINT, method="GET", timeout=5.0)
+        if res.get("status") and "data" in res:
+            return {
+                "status": True,
+                "net": float(res["data"].get("net", 0.0)),
+                "available_cash": float(res["data"].get("availablecash", 0.0)),
+                "collateral": float(res["data"].get("collateral", 0.0))
+            }
+        return {"status": False, "message": res.get("message", "Failed to fetch RMS funds"), "net": 0.0}
 
     def place_order(
         self,
@@ -640,62 +634,28 @@ class AngelOneClient:
 
 
     def cancel_order(self, order_id: str, variety: str = "NORMAL") -> dict:
-        """Cancel an open order on Angel One SmartAPI."""
-        if not self.is_authenticated:
-            ok, msg = self.login()
-            if not ok:
-                return {"status": False, "message": msg}
-
-        headers = self._get_headers()
+        """Cancel an open order on Angel One SmartAPI with auto-recovery."""
         payload = {
             "variety": variety,
             "orderid": order_id
         }
-        try:
-            req = urllib.request.Request(
-                ORDER_CANCEL_ENDPOINT,
-                data=json.dumps(payload).encode("utf-8"),
-                headers=headers,
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=6) as response:
-                res = json.loads(response.read().decode("utf-8"))
-                return res
-        except Exception as e:
-            return {"status": False, "message": str(e)}
+        return self._execute_smartapi_call(ORDER_CANCEL_ENDPOINT, payload=payload, method="POST", timeout=6.0)
 
     def get_positions(self) -> dict:
-        """Fetch live intraday positions directly from Angel One."""
-        if not self.is_authenticated:
-            ok, msg = self.login()
-            if not ok:
-                return {"status": False, "message": msg, "positions": []}
-
-        headers = self._get_headers()
-        try:
-            req = urllib.request.Request(POSITION_ENDPOINT, headers=headers, method="GET")
-            with urllib.request.urlopen(req, timeout=6) as response:
-                res = json.loads(response.read().decode("utf-8"))
-                if res.get("status") and "data" in res:
-                    raw_positions = res["data"] or []
-                    # Filter for active positions with net quantity
-                    active = [p for p in raw_positions if int(p.get("netqty", 0)) != 0]
-                    return {"status": True, "positions": active, "all_positions": raw_positions}
-                return {"status": False, "message": res.get("message", "Failed to fetch positions"), "positions": []}
-        except Exception as e:
-            print(f"[SmartAPI] Get positions error: {e}")
-            return {"status": False, "message": str(e), "positions": []}
+        """Fetch live intraday positions directly from Angel One with auto-recovery."""
+        res = self._execute_smartapi_call(POSITION_ENDPOINT, method="GET", timeout=6.0)
+        if res.get("status") and "data" in res:
+            raw_positions = res["data"] or []
+            # Filter for active positions with net quantity
+            active = [p for p in raw_positions if int(p.get("netqty", 0)) != 0]
+            return {"status": True, "positions": active, "all_positions": raw_positions}
+        return {"status": False, "message": res.get("message", "Failed to fetch positions"), "positions": []}
 
     def square_off_all(self) -> dict:
         """
         Square off all active INTRADAY positions on Angel One SmartAPI immediately.
         Guaranteed to only square off MIS/INTRADAY positions and never Demat CNC holdings.
         """
-        if not self.is_authenticated:
-            ok, msg = self.login()
-            if not ok:
-                return {"status": False, "message": f"Angel One login required: {msg}", "squared_off_count": 0}
-
         pos_res = self.get_positions()
         if not pos_res.get("status"):
             return {"status": False, "message": f"Could not fetch positions: {pos_res.get('message')}", "squared_off_count": 0}
@@ -706,7 +666,6 @@ class AngelOneClient:
 
         squared_off = 0
         errors = []
-        headers = self._get_headers()
 
         for pos in positions:
             try:
@@ -738,18 +697,11 @@ class AngelOneClient:
                     "quantity": str(qty)
                 }
 
-                req = urllib.request.Request(
-                    ORDER_PLACE_ENDPOINT,
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers=headers,
-                    method="POST"
-                )
-                with urllib.request.urlopen(req, timeout=6) as response:
-                    res = json.loads(response.read().decode("utf-8"))
-                    if res.get("status") or res.get("success"):
-                        squared_off += 1
-                    else:
-                        errors.append(f"{sym}: {res.get('message')}")
+                res = self._execute_smartapi_call(ORDER_PLACE_ENDPOINT, payload=payload, method="POST", timeout=6.0)
+                if res.get("status") or res.get("success"):
+                    squared_off += 1
+                else:
+                    errors.append(f"{sym}: {res.get('message')}")
             except Exception as e:
                 errors.append(f"{pos.get('tradingsymbol')}: {e}")
 
@@ -760,23 +712,10 @@ class AngelOneClient:
             "errors": errors
         }
 
-
     def get_order_book(self) -> dict:
-        """Fetch daily order status history from Angel One."""
-        if not self.is_authenticated:
-            ok, _ = self.login()
-            if not ok:
-                return {"status": False, "orders": []}
-
-        headers = self._get_headers()
-
-        try:
-            req = urllib.request.Request(ORDER_BOOK_ENDPOINT, headers=headers, method="GET")
-            with urllib.request.urlopen(req, timeout=6) as response:
-                res = json.loads(response.read().decode("utf-8"))
-                if res.get("status") and "data" in res:
-                    return {"status": True, "orders": res["data"]}
-        except Exception as e:
-            print(f"[SmartAPI] Order book error: {e}")
+        """Fetch daily order status history from Angel One with auto-recovery."""
+        res = self._execute_smartapi_call(ORDER_BOOK_ENDPOINT, method="GET", timeout=6.0)
+        if res.get("status") and "data" in res:
+            return {"status": True, "orders": res["data"]}
         return {"status": False, "orders": []}
 

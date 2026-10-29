@@ -1002,15 +1002,30 @@ def get_angel_settings():
 
 @app.post("/api/settings/angel-one")
 def update_angel_settings(req: AngelSettingsRequest):
-    """Save credentials and authenticate with Angel One SmartAPI."""
+    """Save credentials, persist to database, and authenticate with Angel One SmartAPI."""
     global angel_client
+
+    # Persist credentials in SQLite database
+    try:
+        from backend.database import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('angel_api_key', ?)", (req.api_key.strip(),))
+        cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('angel_client_code', ?)", (req.client_code.strip(),))
+        cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('angel_password', ?)", (req.password.strip(),))
+        cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('angel_totp_secret', ?)", (req.totp_secret.strip(),))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[Settings] Error persisting Angel credentials: {e}")
+
     angel_client = AngelOneClient(
         api_key=req.api_key.strip(),
         client_code=req.client_code.strip(),
         password=req.password.strip(),
         totp_secret=req.totp_secret.strip()
     )
-    success, msg = angel_client.login()
+    success, msg = angel_client.login(force=True)
     cc = req.client_code.strip()
     masked_code = f"{cc[:2]}****{cc[-2:]}" if len(cc) >= 4 else cc
     return {
@@ -1269,9 +1284,9 @@ async def fast_price_tick_broadcaster():
 
             # Fetch batch quotes from Angel One SmartAPI for all open positions & watchlist
             if angel_client.is_configured():
-                if not angel_client.is_authenticated:
+                if not angel_client.is_authenticated or (time.time() - angel_client.token_created_at > 36000):
                     try:
-                        await asyncio.to_thread(angel_client.login)
+                        await asyncio.to_thread(angel_client.login, True)
                     except Exception:
                         pass
                 if angel_client.is_authenticated:
