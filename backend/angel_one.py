@@ -134,7 +134,7 @@ NSE_TOKENS = {
     "TECHM.NS": "13538",
     "TITAN.NS": "3506",
     "TATAMOTORS.NS": "3456",
-    "TMCV.NS": "3456",
+    "TMCV.NS": "759782",
     "TMPV.NS": "3456",
     "TRENT.NS": "1964",
     "TVSMOTOR.NS": "8479",
@@ -375,7 +375,7 @@ class AngelOneClient:
         # Check known aliases
         aliases = {
             "TATAMOTORS.NS": "3456",
-            "TMCV.NS": "3456",
+            "TMCV.NS": "759782",
             "TMPV.NS": "3456",
             "ETERNAL.NS": "5097",
             "ZOMATO.NS": "5097"

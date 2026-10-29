@@ -330,6 +330,14 @@ class PaperTradingEngine:
         side = pos["side"]
         initial_invested = (entry_price * qty) / INTRADAY_LEVERAGE
 
+        # Bad tick safeguard on automated SL/TP exits:
+        if reason in ("STOP_LOSS_HIT", "TARGET_HIT"):
+            divergence = abs(current_price - entry_price) / max(entry_price, 1.0)
+            if divergence > 0.15:
+                conn.rollback()
+                conn.close()
+                return {"success": False, "message": f"Auto-close rejected: Price ₹{current_price} diverged by {divergence*100:.1f}% from entry ₹{entry_price} (Bad Tick Safeguard)."}
+
         if side == "BUY":
             final_leg_pnl = (current_price - entry_price) * qty
         else:  # SHORT SELL

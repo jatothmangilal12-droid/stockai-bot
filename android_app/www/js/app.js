@@ -4697,21 +4697,26 @@ function tickOpenPositionsLive() {
 
     // Real-Time Stop Loss & Target Price Checks (ACTIVE ONLY DURING LIVE MARKET HOURS!)
     if (!isMarketClosed) {
-      if (pos.side === 'BUY') {
-        if (pos.stop_loss && newCmp <= pos.stop_loss) {
-          triggerOccurred = true;
-          closePosition(pos.id, newCmp, 'STOP_LOSS_HIT');
-        } else if (pos.target_price && newCmp >= pos.target_price) {
-          triggerOccurred = true;
-          closePosition(pos.id, newCmp, 'TARGET_HIT');
-        }
-      } else if (pos.side === 'SELL') {
-        if (pos.stop_loss && newCmp >= pos.stop_loss) {
-          triggerOccurred = true;
-          closePosition(pos.id, newCmp, 'STOP_LOSS_HIT');
-        } else if (pos.target_price && newCmp <= pos.target_price) {
-          triggerOccurred = true;
-          closePosition(pos.id, newCmp, 'TARGET_HIT');
+      // Bad tick sanity safeguard: Intraday equities on NSE have price bands (5%-20%).
+      // Instant >15% divergence from entry indicates a data feed glitch / symbol mismatch.
+      const divergencePct = Math.abs(newCmp - pos.entry_price) / Math.max(pos.entry_price, 1);
+      if (divergencePct <= 0.15) {
+        if (pos.side === 'BUY') {
+          if (pos.stop_loss && newCmp <= pos.stop_loss) {
+            triggerOccurred = true;
+            closePosition(pos.id, newCmp, 'STOP_LOSS_HIT');
+          } else if (pos.target_price && newCmp >= pos.target_price) {
+            triggerOccurred = true;
+            closePosition(pos.id, newCmp, 'TARGET_HIT');
+          }
+        } else if (pos.side === 'SELL') {
+          if (pos.stop_loss && newCmp >= pos.stop_loss) {
+            triggerOccurred = true;
+            closePosition(pos.id, newCmp, 'STOP_LOSS_HIT');
+          } else if (pos.target_price && newCmp <= pos.target_price) {
+            triggerOccurred = true;
+            closePosition(pos.id, newCmp, 'TARGET_HIT');
+          }
         }
       }
     }
