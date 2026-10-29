@@ -503,28 +503,24 @@ class AngelOneClient:
                 return {
                     "status": True,
                     "symbol": symbol,
-                            "ltp": float(item.get("ltp", 0.0)),
-                            "percent_change": float(item.get("percentChange", 0.0)),
-                            "net_change": float(item.get("netChange", 0.0)),
-                            "trade_volume": int(item.get("tradeVolume", 0)),
-                            "avg_price": float(item.get("avgPrice", 0.0)),
-                            "bids": bids,
-                            "asks": asks,
-                            "tot_buy_quan": int(tot_buy),
-                            "tot_sell_quan": int(tot_sell),
-                            "buy_ratio": buy_ratio,
-                            "sell_ratio": sell_ratio,
-                            "whale_signal": whale_signal,
-                            "whale_bias": whale_bias,
-                            "whale_label": whale_label,
-                            "big_buy_wall": bool(big_bids),
-                            "big_sell_wall": bool(big_asks),
-                            "feed_time": item.get("exchFeedTime", "")
-                        }
-        except Exception as e:
-            print(f"[SmartAPI] Market depth error for {symbol}: {e}")
-            return {"status": False, "message": str(e)}
-
+                    "ltp": float(item.get("ltp", 0.0)),
+                    "percent_change": float(item.get("percentChange", 0.0)),
+                    "net_change": float(item.get("netChange", 0.0)),
+                    "trade_volume": int(item.get("tradeVolume", 0)),
+                    "avg_price": float(item.get("avgPrice", 0.0)),
+                    "bids": bids,
+                    "asks": asks,
+                    "tot_buy_quan": int(tot_buy),
+                    "tot_sell_quan": int(tot_sell),
+                    "buy_ratio": buy_ratio,
+                    "sell_ratio": sell_ratio,
+                    "whale_signal": whale_signal,
+                    "whale_bias": whale_bias,
+                    "whale_label": whale_label,
+                    "big_buy_wall": bool(big_bids),
+                    "big_sell_wall": bool(big_asks),
+                    "feed_time": item.get("exchFeedTime", "")
+                }
         return {"status": False, "message": "No depth data returned"}
 
     def calculate_margin(self, symbol: str, price: float = 0.0) -> dict:
