@@ -1798,9 +1798,31 @@ def serve_manifest():
         return FileResponse(manifest_file)
     raise HTTPException(status_code=404, detail="Manifest not found")
 
+@app.get("/sw.js")
+def serve_sw():
+    sw_file = FRONTEND_DIR / "sw.js"
+    if sw_file.exists():
+        return FileResponse(
+            sw_file,
+            media_type="application/javascript",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
+    raise HTTPException(status_code=404, detail="Service worker not found")
+
 @app.get("/")
 def serve_index():
     index_file = FRONTEND_DIR / "index.html"
     if index_file.exists():
-        return FileResponse(index_file)
+        return FileResponse(
+            index_file,
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
     return {"message": "StockAI Indian Market Trading Bot is Running."}

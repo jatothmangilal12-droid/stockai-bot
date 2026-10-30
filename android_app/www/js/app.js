@@ -420,9 +420,11 @@ document.addEventListener('DOMContentLoaded', () => {
   loadAlertHistory();
   startContinuousLiveMarketEngine();
 
-  // Register Service Worker for PWA (web only)
+  // Register Service Worker for PWA (web only) with auto-cache invalidation
   if ('serviceWorker' in navigator && (window.location.protocol === 'http:' || window.location.protocol === 'https:') && window.location.port) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js?v=20261030_2').then(reg => {
+      reg.update();
+    }).catch(() => {});
   }
 });
 
