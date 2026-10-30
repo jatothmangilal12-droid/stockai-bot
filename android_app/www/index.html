@@ -588,6 +588,17 @@
         <!-- Rendered dynamically as sleek, modern cards -->
       </div>
 
+      <!-- AI Mistake Learning Hub & Active Safeguards -->
+      <div class="trade-ticket-card" style="margin-top:14px;">
+        <div style="font-weight:700; font-size:0.9rem; margin-bottom:8px; color:#f59e0b;">🧠 AI Mistake Learning Hub & Active Safeguards</div>
+        <div id="ai-mistake-learning-content"></div>
+      </div>
+
+      <!-- AI 5-Pillar Factor Optimizer -->
+      <div class="trade-ticket-card" style="margin-top:14px;">
+        <div style="font-weight:700; font-size:0.9rem; margin-bottom:8px; color:var(--color-cyan);">⚡ 5-Pillar Factor Optimizer (Post-Market Auto-Tuning)</div>
+        <div id="factor-matrix-container" style="display:flex; flex-direction:column; gap:8px;"></div>
+      </div>
 
     </section>
 
@@ -875,6 +886,7 @@
           <span id="approval-modal-buying-power-badge" style="color:#10b981; font-weight:700; margin-left:4px;">(5x MIS)</span>
         </div>
         <div id="modal-engine-badge" style="font-size:0.7rem; padding:3px 8px; border-radius:8px; font-weight:700;"></div>
+        <div id="approval-broker-extra-info" style="font-size:0.75rem; width:100%; margin-top:4px;"></div>
       </div>
     </div>
 
@@ -890,6 +902,83 @@
       </button>
       <button class="btn btn-bullish" id="modal-approve-all-btn" style="padding:10px 22px; font-size:0.9rem; font-weight:800; box-shadow:0 0 16px rgba(16,185,129,0.35);" onclick="approveAllCandidateTrades()">
         ⚡ Execute All Orders (5x MIS)
+      </button>
+    </div>
+  </div>
+
+  <!-- Modal: Re-Edit Stop Loss & Target Price -->
+  <div id="edit-sltp-modal" class="fullpage-trade-modal" role="dialog" aria-modal="true" style="display:none; z-index:99999;">
+    <div class="fullpage-modal-header">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <button class="btn btn-outline" style="padding:6px 12px; font-size:0.8rem;" onclick="closeEditSlTpModal()">
+          ✕ Cancel
+        </button>
+        <div>
+          <div style="font-weight:800; font-size:1.05rem; color:#fff; display:flex; align-items:center; gap:8px;">
+            <span id="edit-sltp-modal-title">✏️ Modify Stop Loss & Target</span>
+            <span class="badge" id="edit-sltp-side-badge" style="font-weight:800; font-size:0.72rem; padding:2px 7px;">BUY</span>
+          </div>
+          <div style="font-size:0.72rem; color:var(--text-muted);" id="edit-sltp-modal-subtitle">Update risk & target levels</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fullpage-modal-body" style="padding:20px; max-width:480px; margin:0 auto; width:100%;">
+      <input type="hidden" id="edit-sltp-pos-id">
+      <input type="hidden" id="edit-sltp-pos-side">
+      <input type="hidden" id="edit-sltp-entry-price">
+      <input type="hidden" id="edit-sltp-symbol-val">
+
+      <!-- Summary Card -->
+      <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:14px; margin-bottom:18px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <span style="font-weight:700; font-size:0.95rem; color:#f8fafc;" id="edit-sltp-symbol">TATAPOWER.NS</span>
+          <span style="font-weight:800; font-size:1rem; font-family:var(--font-mono); color:#38bdf8;" id="edit-sltp-cmp">CMP: ₹415.25</span>
+        </div>
+        <div style="font-size:0.78rem; color:var(--text-muted); display:flex; justify-content:space-between;">
+          <span>Entry: <strong style="color:#fff;" id="edit-sltp-entry">₹415.25</strong></span>
+          <span>Qty: <strong style="color:#fff;" id="edit-sltp-qty">36 shares</strong></span>
+        </div>
+      </div>
+
+      <!-- Stop Loss Field -->
+      <div style="margin-bottom:18px;">
+        <label style="display:flex; justify-content:space-between; font-weight:700; font-size:0.85rem; color:#f43f5e; margin-bottom:6px;">
+          <span>🛑 Stop Loss Price (₹)</span>
+          <span id="edit-sl-diff-pct" style="font-size:0.75rem; font-family:var(--font-mono);">-0.7%</span>
+        </label>
+        <input type="number" step="0.05" id="edit-sl-input" oninput="updateSlPctLabel()" style="width:100%; padding:10px 12px; background:var(--bg-surface); border:1px solid rgba(244,63,94,0.4); color:#fff; border-radius:8px; font-size:1rem; font-weight:700; font-family:var(--font-mono);">
+        <!-- Quick SL Presets -->
+        <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;">
+          <button type="button" class="btn btn-outline btn-xs" onclick="setQuickSlPct(0.005)" style="font-size:0.7rem; padding:3px 8px;">-0.5%</button>
+          <button type="button" class="btn btn-outline btn-xs" onclick="setQuickSlPct(0.007)" style="font-size:0.7rem; padding:3px 8px;">-0.7% (Safe)</button>
+          <button type="button" class="btn btn-outline btn-xs" onclick="setQuickSlPct(0.012)" style="font-size:0.7rem; padding:3px 8px;">-1.2% (Wide)</button>
+          <button type="button" class="btn btn-outline btn-xs" onclick="setQuickSlBreakEven()" style="font-size:0.7rem; padding:3px 8px; border-color:#10b981; color:#10b981;">🛡️ Break-Even</button>
+        </div>
+      </div>
+
+      <!-- Target Price Field -->
+      <div style="margin-bottom:22px;">
+        <label style="display:flex; justify-content:space-between; font-weight:700; font-size:0.85rem; color:#10b981; margin-bottom:6px;">
+          <span>🎯 Target Price (₹)</span>
+          <span id="edit-tp-diff-pct" style="font-size:0.75rem; font-family:var(--font-mono);">+1.5%</span>
+        </label>
+        <input type="number" step="0.05" id="edit-tp-input" oninput="updateTpPctLabel()" style="width:100%; padding:10px 12px; background:var(--bg-surface); border:1px solid rgba(16,185,129,0.4); color:#fff; border-radius:8px; font-size:1rem; font-weight:700; font-family:var(--font-mono);">
+        <!-- Quick TP Presets -->
+        <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;">
+          <button type="button" class="btn btn-outline btn-xs" onclick="setQuickTpPct(0.009)" style="font-size:0.7rem; padding:3px 8px;">+0.9% (Quick)</button>
+          <button type="button" class="btn btn-outline btn-xs" onclick="setQuickTpPct(0.015)" style="font-size:0.7rem; padding:3px 8px;">+1.5% (2R)</button>
+          <button type="button" class="btn btn-outline btn-xs" onclick="setQuickTpPct(0.025)" style="font-size:0.7rem; padding:3px 8px;">+2.5% (Runner)</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="fullpage-modal-footer">
+      <button class="btn btn-outline" style="padding:10px 18px; font-weight:700;" onclick="closeEditSlTpModal()">
+        ✕ Cancel
+      </button>
+      <button class="btn btn-bullish" id="btn-save-sltp" style="padding:10px 24px; font-weight:800; box-shadow:0 0 16px rgba(16,185,129,0.35);" onclick="saveModifiedPositionTargets()">
+        💾 Save SL & TP Targets
       </button>
     </div>
   </div>

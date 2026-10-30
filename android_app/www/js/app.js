@@ -3247,7 +3247,7 @@ async function triggerAiAutoTradeNow() {
 
   if (btn) btn.textContent = '⏳ AI Scanning 5m Breakout Setups...';
 
-  // Fetch breakout-from-consolidation signals only (no gainer/loser chase)
+  // Fetch breakout-from-consolidation signals only (strict 5m institutional breakout rule, no chase)
   let candidates = await fetchIntradaySignals();
 
   // Sync latest live prices to state
@@ -3612,6 +3612,18 @@ async function loadPortfolio() {
           };
         });
 
+        // Guaranteed override: Merge persistent user-customized SL & TP targets in REAL_BROKER mode
+        try {
+          const customTargets = JSON.parse(localStorage.getItem('stockai_custom_targets') || '{}');
+          openPositions.forEach(pos => {
+            const custom = customTargets[String(pos.id)] || customTargets[pos.symbol] || customTargets[(pos.symbol || '').replace('.NS', '')];
+            if (custom) {
+              if (custom.stop_loss !== undefined && custom.stop_loss > 0) pos.stop_loss = custom.stop_loss;
+              if (custom.target_price !== undefined && custom.target_price > 0) pos.target_price = custom.target_price;
+            }
+          });
+        } catch (e) {}
+
         const rmsCash = state.angelRms ? Math.max(0, state.angelRms.net) : 0;
         const totalUnrealized = openPositions.reduce((acc, p) => acc + (p.unrealized_pnl || 0), 0);
         const totalInvested = openPositions.reduce((acc, p) => acc + (p.margin_blocked || 0), 0);
@@ -3650,6 +3662,21 @@ async function loadPortfolio() {
     clearTimeout(timeoutId);
     if (!res.ok) throw new Error('Status not ok');
     const p = await res.json();
+
+    // Guaranteed override: Merge persistent user-customized SL & TP targets
+    try {
+      const customTargets = JSON.parse(localStorage.getItem('stockai_custom_targets') || '{}');
+      if (p.open_positions && Array.isArray(p.open_positions)) {
+        p.open_positions.forEach(pos => {
+          const custom = customTargets[String(pos.id)] || customTargets[pos.symbol] || customTargets[(pos.symbol || '').replace('.NS', '')];
+          if (custom) {
+            if (custom.stop_loss !== undefined && custom.stop_loss > 0) pos.stop_loss = custom.stop_loss;
+            if (custom.target_price !== undefined && custom.target_price > 0) pos.target_price = custom.target_price;
+          }
+        });
+      }
+    } catch (e) {}
+
     state.portfolio = p;
     renderPortfolioUI(p);
     await loadPendingOrders();
@@ -3781,6 +3808,11 @@ function renderOpenPositionsTable(positions, curr) {
     return;
   }
 
+  let customTargets = {};
+  try {
+    customTargets = JSON.parse(localStorage.getItem('stockai_custom_targets') || '{}');
+  } catch (e) {}
+
   tbody.innerHTML = positions.map(pos => {
     const isProfitable = (pos.unrealized_pnl || 0) >= 0;
     const pnlColor = isProfitable ? 'text-bullish' : 'text-bearish';
@@ -3792,10 +3824,17 @@ function renderOpenPositionsTable(positions, curr) {
     const pnlPct = Number(pos.unrealized_pnl_pct || 0).toFixed(2);
 
     const entry = Number(pos.entry_price) || 1;
-    const slVal = Number(pos.stop_loss);
-    const tpVal = Number(pos.target_price);
-    const slDistPct = slVal ? Math.abs(Math.round(((slVal - entry) / entry) * 1000) / 10).toFixed(1) : null;
-    const tpDistPct = tpVal ? Math.abs(Math.round(((tpVal - entry) / entry) * 1000) / 10).toFixed(1) : null;
+    const custom = customTargets[String(pos.id)] || customTargets[pos.symbol] || customTargets[(pos.symbol || '').replace('.NS', '')];
+    const slVal = (custom && custom.stop_loss !== undefined && custom.stop_loss > 0) ? Number(custom.stop_loss) : (pos.stop_loss ? Number(pos.stop_loss) : 0);
+    const tpVal = (custom && custom.target_price !== undefined && custom.target_price > 0) ? Number(custom.target_price) : (pos.target_price ? Number(pos.target_price) : 0);
+
+    if (slVal > 0) pos.stop_loss = slVal;
+    if (tpVal > 0) pos.target_price = tpVal;
+
+    const slDistPct = slVal > 0 ? Math.abs(Math.round(((slVal - entry) / entry) * 1000) / 10).toFixed(1) : null;
+    const tpDistPct = tpVal > 0 ? Math.abs(Math.round(((tpVal - entry) / entry) * 1000) / 10).toFixed(1) : null;
+    const slSign = pos.side === 'BUY' ? '-' : '+';
+    const tpSign = pos.side === 'BUY' ? '+' : '-';
 
     return `
       <tr id="pos-row-${pos.id}" data-symbol="${pos.symbol}">
@@ -3817,17 +3856,198 @@ function renderOpenPositionsTable(positions, curr) {
           <strong>${isProfitable ? '+' : ''}${curr}${pnlVal}</strong> (${isProfitable ? '+' : ''}${pnlPct}%)
         </td>
         <td>
-          <span class="text-bearish" style="font-size:0.72rem; font-weight:700;">🛑 SL: ${pos.stop_loss ? curr + pos.stop_loss + ' (-' + slDistPct + '%)' : '-'}</span><br>
-          <span class="text-bullish" style="font-size:0.72rem; font-weight:700;">🎯 TP: ${pos.target_price ? curr + pos.target_price + ' (+' + tpDistPct + '%)' : '-'}</span>
+          <span class="text-bearish" style="font-size:0.72rem; font-weight:700;">🛑 SL: ${slVal > 0 ? curr + slVal.toFixed(2) + ' (' + slSign + slDistPct + '%)' : '-'}</span><br>
+          <span class="text-bullish" style="font-size:0.72rem; font-weight:700;">🎯 TP: ${tpVal > 0 ? curr + tpVal.toFixed(2) + ' (' + tpSign + tpDistPct + '%)' : '-'}</span>
+          <br>
+          <button class="btn btn-outline btn-xs" onclick="openEditSlTpModal('${pos.id}', '${pos.symbol}', ${slVal || 0}, ${tpVal || 0}, ${pos.entry_price}, '${pos.side}', ${pos.quantity}, ${cmpVal})" style="margin-top:4px; font-size:0.65rem; padding:2px 8px; border-color:rgba(56,189,248,0.5); color:#38bdf8; display:inline-flex; align-items:center; gap:3px; font-weight:700;">
+            ✏️ Edit SL/TP
+          </button>
         </td>
         <td>
-          <button class="btn btn-outline btn-sm" onclick="closePosition(${pos.id}, ${pos.current_price}, 'MANUAL')">
+          <button class="btn btn-outline btn-sm" onclick="closePosition('${pos.id}', ${pos.current_price}, 'MANUAL')">
             Close
           </button>
         </td>
       </tr>
     `;
   }).join('');
+}
+
+// =============================================================================
+// Re-Edit Position Stop Loss (SL) & Target Price (TP) Controller
+// =============================================================================
+
+function openEditSlTpModal(posId, symbol, sl, tp, entryPrice, side, qty, cmp) {
+  const modal = document.getElementById('edit-sltp-modal');
+  if (!modal) return;
+
+  try {
+    const customTargets = JSON.parse(localStorage.getItem('stockai_custom_targets') || '{}');
+    const custom = customTargets[String(posId)] || customTargets[symbol] || customTargets[(symbol || '').replace('.NS', '')];
+    if (custom) {
+      if (custom.stop_loss !== undefined && custom.stop_loss > 0) sl = custom.stop_loss;
+      if (custom.target_price !== undefined && custom.target_price > 0) tp = custom.target_price;
+    }
+  } catch (e) {}
+
+  document.getElementById('edit-sltp-pos-id').value = posId;
+  document.getElementById('edit-sltp-pos-side').value = side;
+  document.getElementById('edit-sltp-entry-price').value = entryPrice;
+  document.getElementById('edit-sltp-symbol-val').value = symbol;
+
+  const cleanSym = (symbol || '').replace('.NS', '').replace('-EQ', '');
+  document.getElementById('edit-sltp-symbol').textContent = `${cleanSym} (${symbol})`;
+  document.getElementById('edit-sltp-cmp').textContent = `CMP: ₹${Number(cmp || entryPrice).toFixed(2)}`;
+  document.getElementById('edit-sltp-entry').textContent = `₹${Number(entryPrice).toFixed(2)}`;
+  document.getElementById('edit-sltp-qty').textContent = `${qty || 1} shares`;
+
+  const badge = document.getElementById('edit-sltp-side-badge');
+  if (badge) {
+    badge.textContent = side;
+    badge.className = `badge ${side === 'BUY' ? 'badge-buy' : 'badge-sell'}`;
+  }
+
+  document.getElementById('edit-sl-input').value = sl > 0 ? Number(sl).toFixed(2) : (side === 'BUY' ? (entryPrice * 0.993).toFixed(2) : (entryPrice * 1.007).toFixed(2));
+  document.getElementById('edit-tp-input').value = tp > 0 ? Number(tp).toFixed(2) : (side === 'BUY' ? (entryPrice * 1.015).toFixed(2) : (entryPrice * 0.985).toFixed(2));
+
+  updateSlPctLabel();
+  updateTpPctLabel();
+
+  modal.style.display = 'flex';
+}
+
+function closeEditSlTpModal() {
+  const modal = document.getElementById('edit-sltp-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function updateSlPctLabel() {
+  const entry = Number(document.getElementById('edit-sltp-entry-price').value) || 1;
+  const side = document.getElementById('edit-sltp-pos-side').value || 'BUY';
+  const sl = Number(document.getElementById('edit-sl-input').value) || entry;
+  const diffPct = side === 'BUY' ? ((sl - entry) / entry) * 100 : ((entry - sl) / entry) * 100;
+  const label = document.getElementById('edit-sl-diff-pct');
+  if (label) {
+    label.textContent = `${diffPct >= 0 ? '+' : ''}${diffPct.toFixed(2)}%`;
+    label.style.color = diffPct >= 0 ? '#10b981' : '#f43f5e';
+  }
+}
+
+function updateTpPctLabel() {
+  const entry = Number(document.getElementById('edit-sltp-entry-price').value) || 1;
+  const side = document.getElementById('edit-sltp-pos-side').value || 'BUY';
+  const tp = Number(document.getElementById('edit-tp-input').value) || entry;
+  const diffPct = side === 'BUY' ? ((tp - entry) / entry) * 100 : ((entry - tp) / entry) * 100;
+  const label = document.getElementById('edit-tp-diff-pct');
+  if (label) {
+    label.textContent = `${diffPct >= 0 ? '+' : ''}${diffPct.toFixed(2)}%`;
+    label.style.color = diffPct >= 0 ? '#10b981' : '#f43f5e';
+  }
+}
+
+function setQuickSlPct(pct) {
+  const entry = Number(document.getElementById('edit-sltp-entry-price').value) || 1;
+  const side = document.getElementById('edit-sltp-pos-side').value || 'BUY';
+  const newSl = side === 'BUY' ? entry * (1 - pct) : entry * (1 + pct);
+  document.getElementById('edit-sl-input').value = (Math.round(newSl * 20) / 20).toFixed(2);
+  updateSlPctLabel();
+}
+
+function setQuickSlBreakEven() {
+  const entry = Number(document.getElementById('edit-sltp-entry-price').value) || 1;
+  const side = document.getElementById('edit-sltp-pos-side').value || 'BUY';
+  const beSl = side === 'BUY' ? entry + 0.05 : entry - 0.05;
+  document.getElementById('edit-sl-input').value = (Math.round(beSl * 20) / 20).toFixed(2);
+  updateSlPctLabel();
+}
+
+function setQuickTpPct(pct) {
+  const entry = Number(document.getElementById('edit-sltp-entry-price').value) || 1;
+  const side = document.getElementById('edit-sltp-pos-side').value || 'BUY';
+  const newTp = side === 'BUY' ? entry * (1 + pct) : entry * (1 - pct);
+  document.getElementById('edit-tp-input').value = (Math.round(newTp * 20) / 20).toFixed(2);
+  updateTpPctLabel();
+}
+
+async function saveModifiedPositionTargets() {
+  const posId = document.getElementById('edit-sltp-pos-id').value;
+  const side = document.getElementById('edit-sltp-pos-side').value || 'BUY';
+  const entry = Number(document.getElementById('edit-sltp-entry-price').value) || 0;
+  const sym = document.getElementById('edit-sltp-symbol-val').value || '';
+  const newSl = parseFloat(document.getElementById('edit-sl-input').value);
+  const newTp = parseFloat(document.getElementById('edit-tp-input').value);
+
+  if (isNaN(newSl) || newSl <= 0) {
+    showToast('Please enter a valid Stop Loss price', 'error');
+    return;
+  }
+  if (isNaN(newTp) || newTp <= 0) {
+    showToast('Please enter a valid Target Price', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('btn-save-sltp');
+  if (btn) btn.textContent = '⏳ Saving...';
+
+  try {
+    // 1. Immediately persist to stockai_custom_targets in localStorage
+    const customTargets = JSON.parse(localStorage.getItem('stockai_custom_targets') || '{}');
+    const targetData = {
+      stop_loss: newSl,
+      target_price: newTp,
+      timestamp: Date.now()
+    };
+    if (posId) customTargets[String(posId)] = targetData;
+    if (sym) {
+      customTargets[sym] = targetData;
+      customTargets[sym.replace('.NS', '').trim()] = targetData;
+    }
+    localStorage.setItem('stockai_custom_targets', JSON.stringify(customTargets));
+
+    // 2. Also update live state.portfolio so current memory state has new SL/TP
+    if (state.portfolio && Array.isArray(state.portfolio.open_positions)) {
+      state.portfolio.open_positions.forEach(p => {
+        if (String(p.id) === String(posId) || p.symbol === sym || (p.symbol && p.symbol.replace('.NS', '') === sym.replace('.NS', ''))) {
+          p.stop_loss = newSl;
+          p.target_price = newTp;
+        }
+      });
+    }
+
+    // 3. Also update stockai_open_positions in localStorage
+    const localPositions = JSON.parse(localStorage.getItem('stockai_open_positions') || '[]');
+    localPositions.forEach(p => {
+      if (String(p.id) === String(posId) || p.symbol === sym || (p.symbol && p.symbol.replace('.NS', '') === sym.replace('.NS', ''))) {
+        p.stop_loss = newSl;
+        p.target_price = newTp;
+      }
+    });
+    localStorage.setItem('stockai_open_positions', JSON.stringify(localPositions));
+
+    // 4. Update the UI table immediately
+    if (state.portfolio) {
+      renderPortfolioUI(state.portfolio);
+    }
+    closeEditSlTpModal();
+    showToast(`✅ ${sym.replace('.NS', '')}: Stop-Loss set to ₹${newSl.toFixed(2)} | Target set to ₹${newTp.toFixed(2)}!`, 'success');
+
+    // 5. Fire asynchronous request to backend database
+    fetch(`${API_BASE}/api/paper/position/${posId}/targets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stop_loss: newSl, target_price: newTp })
+    }).catch(err => {
+      console.warn('Backend target update note (fallback active):', err);
+    });
+
+    // 6. Reload portfolio to ensure full synchronization
+    await loadPortfolio();
+  } catch (err) {
+    console.error('Error saving custom targets:', err);
+    showToast('Failed to save position targets', 'error');
+  } finally {
+    if (btn) btn.textContent = '💾 Save SL & TP Targets';
+  }
 }
 
 // =============================================================================
@@ -4084,6 +4304,19 @@ function renderClosedPositionsTable(trades, curr) {
 }
 
 async function closePosition(positionId, currentPrice, reason = 'MANUAL') {
+  try {
+    const customTargets = JSON.parse(localStorage.getItem('stockai_custom_targets') || '{}');
+    delete customTargets[String(positionId)];
+    if (state.portfolio && Array.isArray(state.portfolio.open_positions)) {
+      const match = state.portfolio.open_positions.find(p => String(p.id) === String(positionId));
+      if (match && match.symbol) {
+        delete customTargets[match.symbol];
+        delete customTargets[match.symbol.replace('.NS', '')];
+      }
+    }
+    localStorage.setItem('stockai_custom_targets', JSON.stringify(customTargets));
+  } catch (e) {}
+
   if (state.executionMode === 'REAL_BROKER') {
     const pos = (state.portfolio && state.portfolio.open_positions) 
       ? state.portfolio.open_positions.find(p => p.id === positionId || p.order_id === positionId || p.symbol === positionId) 
@@ -4918,7 +5151,12 @@ function initWebSocket() {
           loadPendingOrders();
         } else if (msg.type === 'SL_TP_TRIGGER') {
           msg.data.forEach(trig => {
-            showToast(`🔔 ${trig.type}: ${trig.symbol} hit! Result: ${trig.result} (₹${trig.pnl})`, trig.result === 'WIN' ? 'success' : 'error');
+            if (trig.type && (trig.type.includes('TRAILING_SL') || trig.type.includes('PROFIT_LOCKED'))) {
+              showToast(`🛡️ ${trig.type === 'TRAILING_SL_UPDATED' ? 'Trailing Stop-Loss' : 'Profit Lock'}: ${trig.symbol} SL moved to ₹${trig.price} (${trig.result})`, 'info');
+            } else {
+              const pnlStr = trig.pnl !== undefined ? ` (₹${Number(trig.pnl).toFixed(2)})` : '';
+              showToast(`🔔 ${trig.type}: ${trig.symbol} hit! Result: ${trig.result}${pnlStr}`, trig.result === 'WIN' ? 'success' : 'error');
+            }
           });
           loadPortfolio();
         } else if (msg.type === 'BROKER_OCO_UPDATE') {

@@ -16,7 +16,8 @@ from backend.config import (
     BREAK_EVEN_TRIGGER_RATIO,
     PARTIAL_PROFIT_BOOK_RATIO,
     FREE_RIDE_RUNNER_RATIO,
-    ADAPTIVE_ATR_TRAILING_MULT
+    ADAPTIVE_ATR_TRAILING_MULT,
+    RISK_PER_TRADE_RS
 )
 
 INTRADAY_LEVERAGE = 5.0  # 5x Leverage for NSE Intraday (MIS) Equity Trading (20% Upfront Margin)
@@ -409,6 +410,43 @@ class PaperTradingEngine:
             "trade_result": trade_result
         }
 
+    def update_position_targets(self, position_id: int, stop_loss: float = None, target_price: float = None) -> dict:
+        """Update Stop Loss and/or Target Price of an open active position."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM positions WHERE id = ? AND status = 'OPEN'", (position_id,))
+        pos = cursor.fetchone()
+        if not pos:
+            conn.close()
+            return {"success": False, "message": f"Open position #{position_id} not found."}
+
+        updates = []
+        params = []
+        if stop_loss is not None:
+            updates.append("stop_loss = ?")
+            params.append(round(float(stop_loss), 2))
+        if target_price is not None:
+            updates.append("target_price = ?")
+            params.append(round(float(target_price), 2))
+
+        if not updates:
+            conn.close()
+            return {"success": False, "message": "No SL or TP provided to update."}
+
+        params.append(position_id)
+        cursor.execute(f"UPDATE positions SET {', '.join(updates)} WHERE id = ?", tuple(params))
+        conn.commit()
+
+        cursor.execute("SELECT * FROM positions WHERE id = ?", (position_id,))
+        updated_pos = dict(cursor.fetchone())
+        conn.close()
+
+        return {
+            "success": True,
+            "message": f"Updated targets for {updated_pos['symbol']}: SL=₹{updated_pos.get('stop_loss')}, TP=₹{updated_pos.get('target_price')}",
+            "position": updated_pos
+        }
+
 
     def check_sl_tp_triggers(self, current_prices: dict) -> list:
         """Check all open positions against current market prices for auto Stop Loss or Target hits."""
@@ -653,10 +691,16 @@ class PaperTradingEngine:
 
             # Risk-based position size from breakout signal (fixed risk ₹1,000 / risk_per_share)
             qty = int(sig.get("qty") or 0)
-            if qty < 1:
-                continue
             sl = sig.get("stop_loss")
             tp = sig.get("target_1")
+            if qty < 1:
+                # Dynamic fallback sizing based on RISK_PER_TRADE_RS and stop loss
+                risk_per_share = abs(cmp - sl) if (sl and sl > 0) else (cmp * 0.007)
+                risk_rs = getattr(self, "risk_per_trade_rs", RISK_PER_TRADE_RS)
+                qty = max(1, int(risk_rs // risk_per_share)) if risk_per_share > 0 else 1
+
+            if qty < 1:
+                continue
             reasons_summary = "; ".join(sig.get("reasons", [])[:3])
 
             if "BUY" in action:

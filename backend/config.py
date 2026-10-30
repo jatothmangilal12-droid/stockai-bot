@@ -24,7 +24,7 @@ DEFAULT_STOCKS = [
     {"symbol": "SUZLON.NS", "name": "Suzlon Energy", "market": "NSE", "currency": "₹", "price": 62.0},
     {"symbol": "IRFC.NS", "name": "IRFC Ltd", "market": "NSE", "currency": "₹", "price": 148.0},
     {"symbol": "RVNL.NS", "name": "Rail Vikas Nigam Ltd", "market": "NSE", "currency": "₹", "price": 430.0},
-    {"symbol": "ZOMATO.NS", "name": "Zomato Ltd", "market": "NSE", "currency": "₹", "price": 265.0},
+    {"symbol": "ETERNAL.NS", "name": "Eternal (Zomato) Ltd", "market": "NSE", "currency": "₹", "price": 265.0},
     {"symbol": "TRENT.NS", "name": "Trent Limited", "market": "NSE", "currency": "₹", "price": 7100.0},
     {"symbol": "DIXON.NS", "name": "Dixon Technologies", "market": "NSE", "currency": "₹", "price": 14200.0},
     {"symbol": "SBIN.NS", "name": "State Bank of India", "market": "NSE", "currency": "₹", "price": 820.0},
@@ -81,7 +81,7 @@ NIFTY_UNIVERSE = [
     {"symbol": "SJVN.NS", "name": "SJVN Limited", "sector": "Power"},
 
     # High-Beta Midcaps & Multi-Baggers
-    {"symbol": "ZOMATO.NS", "name": "Zomato Ltd", "sector": "New-Age"},
+    {"symbol": "ETERNAL.NS", "name": "Eternal (Zomato) Ltd", "sector": "New-Age"},
     {"symbol": "TRENT.NS", "name": "Trent Limited", "sector": "Retail"},
     {"symbol": "DIXON.NS", "name": "Dixon Technologies", "sector": "Electronics"},
     {"symbol": "POLYCAB.NS", "name": "Polycab India", "sector": "Industrial"},

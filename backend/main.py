@@ -25,16 +25,26 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 import yfinance as yf
+import math
 import numpy as np
 
 def json_sanitize(obj):
-    """Recursively convert NumPy scalars/arrays to standard Python primitives."""
-    if isinstance(obj, dict):
+    """Recursively convert NumPy scalars/arrays and handle NaN/Infinity to standard Python primitives."""
+    if isinstance(obj, bool):
+        return obj
+    elif isinstance(obj, dict):
         return {str(k): json_sanitize(v) for k, v in obj.items()}
     elif isinstance(obj, (list, tuple, set)):
         return [json_sanitize(x) for x in obj]
     elif isinstance(obj, np.ndarray):
         return [json_sanitize(x) for x in obj.tolist()]
+    elif isinstance(obj, (np.floating, float)):
+        val = float(obj)
+        if math.isnan(val) or math.isinf(val):
+            return None
+        return val
+    elif isinstance(obj, (np.integer, int)):
+        return int(obj)
     elif isinstance(obj, np.generic):
         return obj.item()
     return obj
@@ -113,6 +123,11 @@ class OrderRequest(BaseModel):
 class CloseOrderRequest(BaseModel):
     current_price: float
     reason: Optional[str] = "MANUAL"
+
+
+class UpdatePositionTargetsRequest(BaseModel):
+    stop_loss: Optional[float] = None
+    target_price: Optional[float] = None
 
 
 class AngelSettingsRequest(BaseModel):
@@ -755,6 +770,21 @@ def close_paper_position(position_id: int, req: CloseOrderRequest):
     return paper_trading.close_position(position_id, req.current_price, req.reason)
 
 
+@app.post("/api/paper/position/{position_id}/targets")
+@app.put("/api/paper/position/{position_id}/targets")
+def update_paper_position_targets(position_id: str, req: UpdatePositionTargetsRequest):
+    """Re-edit Stop Loss and Target Price for an active position."""
+    try:
+        pid = int(position_id)
+        return json_sanitize(paper_trading.update_position_targets(
+            position_id=pid,
+            stop_loss=req.stop_loss,
+            target_price=req.target_price
+        ))
+    except ValueError:
+        return {"success": False, "message": f"Invalid position id: {position_id}"}
+
+
 @app.post("/api/paper/reset")
 def reset_paper_portfolio():
     """Reset virtual account back to ₹1,00,000."""
@@ -1010,9 +1040,28 @@ def get_pre_market_plan_endpoint():
 def trigger_ai_auto_trade():
     """
     Autonomous AI Trigger:
-    Scans real-time Top Gainers & Losers, finds genuine momentum setups, sets SL & Target, and enters trades!
+    Scans real-time 5m consolidation breakout setups, sets SL & Target, and enters trades!
     """
-    signals = get_live_market_movers()
+    sig_resp = intraday_signals()
+    signals = []
+    if isinstance(sig_resp, dict) and sig_resp.get("success"):
+        for s in sig_resp.get("signals", []):
+            sg = s.get("signal", {})
+            if not sg:
+                continue
+            signals.append({
+                "symbol": s["symbol"],
+                "name": s.get("name") or s["symbol"].replace(".NS", ""),
+                "action": sg.get("side", "BUY"),
+                "confidence": 100,
+                "stop_loss": sg.get("sl"),
+                "target_1": sg.get("tp"),
+                "qty": sg.get("qty", 1),
+                "price": s["price"],
+                "reasons": [f"Breakout of {s.get('state', 'COMPRESSING')} range on 5m"],
+                "macro_trend": "NEUTRAL",
+                "exhaustion_ratio": 0.0,
+            })
 
     for s in signals:
         LATEST_PRICES[s["symbol"]] = s["price"]
@@ -1165,10 +1214,14 @@ def get_broker_oco_orders():
 
 @app.post("/api/broker/close/{symbol}")
 def close_broker_symbol(symbol: str):
-    """Square off specific symbol on Angel One FIRST, then cancel its companion OCO orders."""
+    """Square off specific symbol on Angel One cleanly, cancelling its companion OCO orders first."""
     from backend.broker_oco import angel_oco_manager
+    from backend.angel_one import ORDER_PLACE_ENDPOINT
     pos_res = angel_client.get_positions()
     clean = symbol.replace(".NS", "").replace("-EQ", "").strip().upper()
+
+    # Cancel companion OCO orders first so they don't trigger during square-off
+    angel_oco_manager.cancel_oco_for_symbol(angel_client, symbol)
 
     if pos_res.get("status"):
         positions = pos_res.get("positions", [])
@@ -1178,19 +1231,24 @@ def close_broker_symbol(symbol: str):
                 net_qty = int(p.get("netqty", 0))
                 if net_qty != 0:
                     exit_side = "SELL" if net_qty > 0 else "BUY"
-                    order_res = angel_client.place_order(
-                        symbol=f"{clean}.NS",
-                        side=exit_side,
-                        quantity=abs(net_qty),
-                        price=0.0,
-                        order_type="MARKET"
-                    )
-                    # After exit order is placed, cancel companion OCO SL and Target orders
-                    angel_oco_manager.cancel_oco_for_symbol(angel_client, symbol)
+                    token = str(p.get("symboltoken") or angel_client._resolve_token(clean) or "")
+                    payload = {
+                        "variety": "NORMAL",
+                        "tradingsymbol": p.get("tradingsymbol", f"{clean}-EQ"),
+                        "symboltoken": token,
+                        "transactiontype": exit_side,
+                        "exchange": p.get("exchange", "NSE"),
+                        "ordertype": "MARKET",
+                        "producttype": "INTRADAY",
+                        "duration": "DAY",
+                        "price": "0",
+                        "squareoff": "0",
+                        "stoploss": "0",
+                        "quantity": str(abs(net_qty))
+                    }
+                    order_res = angel_client._execute_smartapi_call(ORDER_PLACE_ENDPOINT, payload=payload, method="POST", timeout=6.0)
                     return order_res
 
-    # If no open broker position was found, cancel any leftover pending OCO orders
-    angel_oco_manager.cancel_oco_for_symbol(angel_client, symbol)
     return {"status": True, "message": f"Active OCO orders cancelled for {clean} (no open broker position)."}
 
 

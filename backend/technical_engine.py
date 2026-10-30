@@ -11,14 +11,34 @@ from backend.config import CANDLESTICK_INTERVAL, CANDLESTICK_PERIOD
 class TechnicalEngine:
     """Computes 15-minute indicators and detects candlestick patterns."""
 
+    SYMBOL_ALIASES = {
+        "ZOMATO.NS": "ETERNAL.NS",
+        "ZOMATO": "ETERNAL.NS",
+        "TATAMOTORS.NS": "TMPV.NS",
+        "TATAMOTORS": "TMPV.NS",
+    }
+
+    def resolve_symbol(self, symbol: str) -> str:
+        """Map legacy or renamed NSE tickers to active traded symbols."""
+        if not symbol:
+            return symbol
+        clean = symbol.strip().upper()
+        return self.SYMBOL_ALIASES.get(clean, symbol)
+
     def fetch_candlesticks(self, symbol: str, period: str = CANDLESTICK_PERIOD, interval: str = CANDLESTICK_INTERVAL) -> pd.DataFrame:
         """Fetch 15m OHLCV data using yfinance."""
+        target_symbol = self.resolve_symbol(symbol)
         try:
-            ticker = yf.Ticker(symbol)
+            ticker = yf.Ticker(target_symbol)
             df = ticker.history(period=period, interval=interval)
             if df.empty:
                 # Fallback to 1mo period if 5d has limited data
                 df = ticker.history(period="1mo", interval=interval)
+            
+            if df.empty and target_symbol != symbol:
+                # Try original symbol if alias yielded nothing
+                ticker = yf.Ticker(symbol)
+                df = ticker.history(period=period, interval=interval)
             
             if df.empty:
                 return pd.DataFrame()
@@ -276,7 +296,8 @@ class TechnicalEngine:
         # Fetch 1-Hour intermediate trend
         hourly_trend = "NEUTRAL"
         try:
-            ticker = yf.Ticker(symbol)
+            target_symbol = self.resolve_symbol(symbol)
+            ticker = yf.Ticker(target_symbol)
             h_df = ticker.history(period="1mo", interval="1h")
             if not h_df.empty and len(h_df) >= 20:
                 h_close = h_df["Close"]
@@ -319,7 +340,8 @@ class TechnicalEngine:
         Fetch Daily Higher-Timeframe trend to filter out false breakouts and counter-trend traps.
         """
         try:
-            ticker = yf.Ticker(symbol)
+            target_symbol = self.resolve_symbol(symbol)
+            ticker = yf.Ticker(target_symbol)
             daily = ticker.history(period="3mo", interval="1d")
             if daily.empty or len(daily) < 15:
                 return {"trend": "NEUTRAL", "confidence": 50, "description": "Insufficient daily data"}
